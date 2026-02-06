@@ -34,7 +34,7 @@ const LANGUAGES = [
   { value: "tur", label: "Turkish" },
 ];
 
-export default function UploadForm() {
+export default function UploadForm({ disabled = false }: { disabled?: boolean }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [mediatype, setMediatype] = useState("data");
@@ -59,9 +59,11 @@ export default function UploadForm() {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const isDisabled = uploading || disabled;
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    disabled: uploading,
+    disabled: isDisabled,
   });
 
   async function handleSubmit(e: React.FormEvent) {
@@ -170,7 +172,7 @@ export default function UploadForm() {
   const totalSize = files.reduce((acc, f) => acc + f.size, 0);
 
   return (
-    <form onSubmit={handleSubmit} className="rounded-lg border border-white/10 bg-white/[0.02] p-6">
+    <form onSubmit={handleSubmit} className={`rounded-lg border border-white/10 bg-white/[0.02] p-6 ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
       <h2 className="mb-6 text-lg font-semibold">New Upload</h2>
 
       {error && (
