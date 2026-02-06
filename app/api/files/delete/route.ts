@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getUserFolder, deleteItem } from "@/lib/b2";
 import { deleteFromInternetArchive } from "@/lib/internet-archive";
+import pool from "@/lib/db";
 
 export async function DELETE(request: NextRequest) {
   try {
@@ -33,6 +34,16 @@ export async function DELETE(request: NextRequest) {
           console.error(`Failed to delete ${fileName} from IA:`, err);
         }
       }
+    }
+
+    // Delete from database
+    try {
+      await pool.query(
+        `DELETE FROM public.items WHERE user_id = (SELECT id FROM public.users WHERE email = $1) AND folder = $2`,
+        [session.email, titleFolder]
+      );
+    } catch (dbErr) {
+      console.error("Failed to delete item from DB:", dbErr);
     }
 
     return NextResponse.json({ message: "Item deleted successfully" });

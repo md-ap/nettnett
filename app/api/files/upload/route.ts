@@ -3,6 +3,7 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { s3Client, BUCKET_NAME, getUserFolder, saveMetadata } from "@/lib/b2";
 import { getSession } from "@/lib/auth";
 import { uploadToInternetArchive, sanitizeIdentifier } from "@/lib/internet-archive";
+import pool from "@/lib/db";
 
 export async function POST(request: NextRequest) {
   try {
@@ -110,6 +111,41 @@ export async function POST(request: NextRequest) {
     };
 
     await saveMetadata(userFolder, titleFolder, metadata);
+
+    // Also store in database for search/editing
+    try {
+      await pool.query(
+        `INSERT INTO public.items (user_id, folder, title, description, mediatype, creator, date, subject, language, ia_identifier, ia_url, created_at)
+         VALUES ((SELECT id FROM public.users WHERE email = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+         ON CONFLICT (user_id, folder) DO UPDATE SET
+           title = EXCLUDED.title,
+           description = EXCLUDED.description,
+           mediatype = EXCLUDED.mediatype,
+           creator = EXCLUDED.creator,
+           date = EXCLUDED.date,
+           subject = EXCLUDED.subject,
+           language = EXCLUDED.language,
+           ia_identifier = EXCLUDED.ia_identifier,
+           ia_url = EXCLUDED.ia_url,
+           updated_at = NOW()`,
+        [
+          session.email,
+          titleFolder,
+          title,
+          description,
+          mediatype,
+          creator || null,
+          date || null,
+          JSON.stringify(subjects),
+          language || null,
+          iaIdentifier,
+          iaUrl,
+        ]
+      );
+    } catch (dbErr) {
+      // DB insert is secondary — don't fail the upload if DB has issues
+      console.error("Failed to insert item into DB:", dbErr);
+    }
 
     return NextResponse.json({
       success: true,

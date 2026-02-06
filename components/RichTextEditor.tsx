@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useEffect } from "react";
 
 interface RichTextEditorProps {
   value: string;
@@ -47,10 +47,28 @@ export default function RichTextEditor({
   disabled = false,
 }: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
+  // Track whether the last change was from user input (internal)
+  // to avoid re-rendering innerHTML and losing cursor position
+  const isInternalChange = useRef(false);
+
+  // Sync value prop to editor only on external changes
+  // (initial load, form reset, edit modal open — NOT during typing)
+  useEffect(() => {
+    if (isInternalChange.current) {
+      // This change came from user typing — skip innerHTML update
+      isInternalChange.current = false;
+      return;
+    }
+    // External change — safely update innerHTML
+    if (editorRef.current && editorRef.current.innerHTML !== value) {
+      editorRef.current.innerHTML = value || "";
+    }
+  }, [value]);
 
   const exec = useCallback((command: string, val?: string) => {
     document.execCommand(command, false, val);
     if (editorRef.current) {
+      isInternalChange.current = true;
       onChange(editorRef.current.innerHTML);
     }
   }, [onChange]);
@@ -58,6 +76,7 @@ export default function RichTextEditor({
   const handleInput = useCallback(() => {
     if (editorRef.current) {
       const html = editorRef.current.innerHTML;
+      isInternalChange.current = true;
       onChange(html === "<br>" ? "" : html);
     }
   }, [onChange]);
@@ -103,7 +122,6 @@ export default function RichTextEditor({
           contentEditable={!disabled}
           onInput={handleInput}
           onPaste={handlePaste}
-          dangerouslySetInnerHTML={{ __html: value }}
           className="min-h-[100px] px-4 py-3 text-sm text-white outline-none bg-white/5 [&_h3]:text-base [&_h3]:font-bold [&_h3]:my-1 [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:my-1 [&_a]:text-blue-400 [&_a]:underline [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1"
           suppressContentEditableWarning
         />

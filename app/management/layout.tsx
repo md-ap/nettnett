@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import Navbar from "@/components/Navbar";
 
-export default async function DashboardLayout({
+export default async function ManagementLayout({
   children,
 }: {
   children: React.ReactNode;

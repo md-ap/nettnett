@@ -2,20 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 
 export function middleware(request: NextRequest) {
   const token = request.cookies.get("nettnett_session")?.value;
-  const isAuthPage = request.nextUrl.pathname === "/";
+  const isLoginPage = request.nextUrl.pathname === "/login";
   const isDashboard = request.nextUrl.pathname.startsWith("/dashboard");
+  const isManagement = request.nextUrl.pathname.startsWith("/management");
 
-  if (isAuthPage && token) {
+  // Logged-in users visiting /login → redirect to /dashboard
+  if (isLoginPage && token) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  if (isDashboard && !token) {
-    return NextResponse.redirect(new URL("/", request.url));
+  // Unauthenticated users visiting protected routes → redirect to /login
+  if ((isDashboard || isManagement) && !token) {
+    return NextResponse.redirect(new URL("/login", request.url));
   }
 
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/", "/dashboard/:path*"],
+  matcher: ["/login", "/dashboard/:path*", "/management/:path*"],
 };
