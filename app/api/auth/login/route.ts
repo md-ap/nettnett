@@ -58,8 +58,22 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (error) {
     console.error("Login error:", error);
+    const message =
+      error instanceof Error ? error.message : "Unknown error";
+    const isDbError =
+      message.includes("ECONNREFUSED") ||
+      message.includes("timeout") ||
+      message.includes("does not exist") ||
+      message.includes("relation") ||
+      message.includes("connect");
     return NextResponse.json(
-      { error: "Internal server error" },
+      {
+        error: isDbError
+          ? "Database connection error. Please try again later."
+          : "Internal server error",
+        detail:
+          process.env.NODE_ENV === "development" ? message : undefined,
+      },
       { status: 500 }
     );
   }

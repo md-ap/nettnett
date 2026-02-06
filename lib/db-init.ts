@@ -4,7 +4,7 @@ export async function initializeDatabase() {
   const client = await pool.connect();
   try {
     await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE IF NOT EXISTS public.users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         email VARCHAR(255) UNIQUE NOT NULL,
         first_name VARCHAR(100) NOT NULL,
@@ -15,9 +15,9 @@ export async function initializeDatabase() {
     `);
 
     await client.query(`
-      CREATE TABLE IF NOT EXISTS files (
+      CREATE TABLE IF NOT EXISTS public.files (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
         file_name VARCHAR(500) NOT NULL,
         file_key VARCHAR(500) NOT NULL,
         file_size BIGINT NOT NULL,
@@ -26,7 +26,7 @@ export async function initializeDatabase() {
     `);
 
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_files_user_id ON files(user_id);
+      CREATE INDEX IF NOT EXISTS idx_files_user_id ON public.files(user_id);
     `);
 
     // Items table — stores upload metadata (mirrors metadata.json in B2)
