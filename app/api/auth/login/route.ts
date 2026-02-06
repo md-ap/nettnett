@@ -56,8 +56,14 @@ export async function POST(request: NextRequest) {
 
     response.cookies.set(cookie.name, cookie.value, cookie);
     return response;
-  } catch (error) {
-    console.error("Login error:", error);
+  } catch (error: unknown) {
+    const err = error as Error & { code?: string };
+    console.error("Login error:", {
+      message: err.message,
+      code: err.code,
+      name: err.name,
+      connectionString: process.env.DATABASE_URL ? "DATABASE_URL set" : process.env.NILEDB_POSTGRES_URL ? "NILEDB_POSTGRES_URL set" : process.env.POSTGRES_URL ? "POSTGRES_URL set" : "NO DB URL FOUND",
+    });
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
