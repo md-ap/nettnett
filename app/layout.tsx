@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import RadioProvider from "@/components/RadioProvider";
 
 export const metadata: Metadata = {
   title: "NettNett",
@@ -14,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen bg-black text-white antialiased">
-        {children}
+        <RadioProvider>{children}</RadioProvider>
       </body>
     </html>
   );
