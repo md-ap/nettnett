@@ -47,6 +47,8 @@ export default function PlaylistManager() {
   // Drag reorder state for songs within a playlist
   const [draggedSong, setDraggedSong] = useState<{ file: MediaFile; playlistId: number } | null>(null);
   const [dragOverSongIndex, setDragOverSongIndex] = useState<number | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null);
+  const dropdownBtnRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const dragCounterRef = useRef(0);
   const mediaScrollRef = useRef<HTMLDivElement>(null);
 
@@ -117,16 +119,38 @@ export default function PlaylistManager() {
     loadAll();
   }, [fetchPlaylists, fetchFiles]);
 
+  // Open dropdown with position calculation
+  function openDropdown(fileId: number) {
+    if (openDropdownId === fileId) {
+      setOpenDropdownId(null);
+      setDropdownPos(null);
+      return;
+    }
+    const btn = dropdownBtnRefs.current.get(fileId);
+    if (btn) {
+      const rect = btn.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const dropdownHeight = playlists.length * 32 + 40; // estimate
+      const openUp = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+      setDropdownPos({
+        top: openUp ? rect.top - dropdownHeight : rect.bottom + 4,
+        left: rect.right - 180, // align right edge
+        openUp,
+      });
+    }
+    setOpenDropdownId(fileId);
+  }
+
   // Close dropdown on scroll or click outside
   useEffect(() => {
     if (openDropdownId === null) return;
     const scrollEl = mediaScrollRef.current;
-    const handleScroll = () => setOpenDropdownId(null);
+    const handleScroll = () => { setOpenDropdownId(null); setDropdownPos(null); };
     const handleClick = (e: MouseEvent) => {
-      // Close if click is outside the dropdown
       const target = e.target as HTMLElement;
       if (!target.closest("[data-dropdown]")) {
         setOpenDropdownId(null);
+        setDropdownPos(null);
       }
     };
     scrollEl?.addEventListener("scroll", handleScroll);
@@ -406,6 +430,29 @@ export default function PlaylistManager() {
     }
   }
 
+  // Reorder songs by arrow buttons (mobile)
+  async function reorderSongByIndex(playlistId: number, fromIndex: number, toIndex: number) {
+    const songs = getPlaylistSongs(playlistId);
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || toIndex >= songs.length) return;
+    const reordered = [...songs];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+    try {
+      await fetch("/api/radio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "playlist-reorder",
+          playlistId,
+          order: reordered.map((s) => s.id),
+        }),
+      });
+      await Promise.all([fetchFiles(), fetchPlaylists()]);
+    } catch (err) {
+      console.error("Failed to reorder songs:", err);
+    }
+  }
+
   // Song drag within playlist
   function handleSongDragStart(file: MediaFile, playlistId: number) {
     setDraggedSong({ file, playlistId });
@@ -543,7 +590,7 @@ export default function PlaylistManager() {
                 >
                   {/* Playlist header */}
                   <div className="flex items-center gap-2 px-3 py-2.5">
-                    {/* Drag handle for playlist reorder */}
+                    {/* Drag handle for playlist reorder (desktop) */}
                     <div
                       draggable
                       onDragStart={(e) => handlePlaylistDragStart(e, pl.id)}
@@ -551,7 +598,7 @@ export default function PlaylistManager() {
                         setDraggedPlaylistId(null);
                         setDragOverPlaylistId(null);
                       }}
-                      className="cursor-grab active:cursor-grabbing p-0.5 text-white/20 hover:text-white/40"
+                      className="hidden md:block cursor-grab active:cursor-grabbing p-0.5 text-white/20 hover:text-white/40"
                       title="Drag to reorder"
                     >
                       <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
@@ -562,6 +609,24 @@ export default function PlaylistManager() {
                         <circle cx="9" cy="19" r="1.5" />
                         <circle cx="15" cy="19" r="1.5" />
                       </svg>
+                    </div>
+
+                    {/* Reorder arrows (mobile) */}
+                    <div className="flex flex-col gap-0.5 md:hidden">
+                      <button
+                        onClick={() => { if (plIndex > 0) reorderPlaylists(plIndex, plIndex - 1); }}
+                        disabled={plIndex === 0}
+                        className="p-0.5 text-white/30 disabled:opacity-20"
+                      >
+                        <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M5 15l7-7 7 7" /></svg>
+                      </button>
+                      <button
+                        onClick={() => { if (plIndex < playlists.length - 1) reorderPlaylists(plIndex, plIndex + 1); }}
+                        disabled={plIndex === playlists.length - 1}
+                        className="p-0.5 text-white/30 disabled:opacity-20"
+                      >
+                        <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
+                      </button>
                     </div>
 
                     {/* Priority number */}
@@ -671,7 +736,8 @@ export default function PlaylistManager() {
                       ) : (
                         <div className="space-y-0.5">
                           <p className="mb-1 text-[10px] uppercase tracking-wider text-white/25">
-                            Drag songs to reorder
+                            <span className="hidden md:inline">Drag songs to reorder</span>
+                            <span className="md:hidden">Tap arrows to reorder</span>
                           </p>
                           {songs.map((song, i) => (
                             <div
@@ -684,7 +750,7 @@ export default function PlaylistManager() {
                                 setDraggedSong(null);
                                 setDragOverSongIndex(null);
                               }}
-                              className={`group flex items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors cursor-grab active:cursor-grabbing hover:bg-white/5 ${
+                              className={`group flex items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors md:cursor-grab md:active:cursor-grabbing hover:bg-white/5 ${
                                 draggedSong?.file.id === song.id ? "opacity-40" : ""
                               } ${
                                 dragOverSongIndex === i && draggedSong?.playlistId === pl.id
@@ -692,8 +758,8 @@ export default function PlaylistManager() {
                                   : ""
                               }`}
                             >
-                              {/* Song drag handle */}
-                              <svg className="h-3 w-3 flex-shrink-0 text-white/15" fill="currentColor" viewBox="0 0 24 24">
+                              {/* Song drag handle (desktop) */}
+                              <svg className="hidden md:block h-3 w-3 flex-shrink-0 text-white/15" fill="currentColor" viewBox="0 0 24 24">
                                 <circle cx="9" cy="5" r="1.5" />
                                 <circle cx="15" cy="5" r="1.5" />
                                 <circle cx="9" cy="12" r="1.5" />
@@ -701,6 +767,23 @@ export default function PlaylistManager() {
                                 <circle cx="9" cy="19" r="1.5" />
                                 <circle cx="15" cy="19" r="1.5" />
                               </svg>
+                              {/* Song reorder arrows (mobile) */}
+                              <div className="flex flex-col gap-0 md:hidden flex-shrink-0">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); reorderSongByIndex(pl.id, i, i - 1); }}
+                                  disabled={i === 0}
+                                  className="p-0.5 text-white/30 disabled:opacity-20"
+                                >
+                                  <svg className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M5 15l7-7 7 7" /></svg>
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); reorderSongByIndex(pl.id, i, i + 1); }}
+                                  disabled={i === songs.length - 1}
+                                  className="p-0.5 text-white/30 disabled:opacity-20"
+                                >
+                                  <svg className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
+                                </button>
+                              </div>
                               <span className="w-4 text-right text-white/20">
                                 {i + 1}
                               </span>
@@ -790,7 +873,6 @@ export default function PlaylistManager() {
             <div className="space-y-1">
               {sortedFiles.map((file) => {
                 const processing = isProcessing(file);
-                const dropdownOpen = openDropdownId === file.id;
                 return (
                   <div
                     key={file.id}
@@ -841,54 +923,14 @@ export default function PlaylistManager() {
 
                     {/* Playlist dropdown button */}
                     {!processing && playlists.length > 0 && (
-                      <div className="relative flex-shrink-0" data-dropdown>
+                      <div className="flex-shrink-0" data-dropdown>
                         <button
-                          onClick={() => setOpenDropdownId(dropdownOpen ? null : file.id)}
+                          ref={(el) => { if (el) dropdownBtnRefs.current.set(file.id, el); }}
+                          onClick={() => openDropdown(file.id)}
                           className="rounded border border-white/10 px-2 py-1 text-[10px] text-white/50 transition-colors hover:bg-white/10 hover:text-white"
                         >
                           {file.playlists?.length > 0 ? "Edit" : "+ Add"}
                         </button>
-
-                        {/* Dropdown with playlist checkboxes */}
-                        {dropdownOpen && (
-                          <div className="absolute right-0 bottom-full z-20 mb-1 min-w-[180px] rounded-lg border border-white/15 bg-neutral-900 py-1 shadow-xl">
-                            <p className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-white/30">
-                              Add to playlists
-                            </p>
-                            {playlists.map((pl) => {
-                              const isIn = file.playlists?.some((p) => p.id === pl.id);
-                              const isToggling = actionLoading === `toggle-file-${file.id}-${pl.id}`;
-                              return (
-                                <button
-                                  key={pl.id}
-                                  onClick={() => toggleFileInPlaylist(file, pl.id)}
-                                  disabled={isToggling}
-                                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-white/10 disabled:opacity-50"
-                                >
-                                  <span
-                                    className={`flex h-3.5 w-3.5 items-center justify-center rounded border ${
-                                      isIn
-                                        ? "border-green-400 bg-green-400/20"
-                                        : "border-white/20"
-                                    }`}
-                                  >
-                                    {isIn && (
-                                      <svg className="h-2.5 w-2.5 text-green-400" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
-                                        <path d="M5 13l4 4L19 7" />
-                                      </svg>
-                                    )}
-                                    {isToggling && (
-                                      <div className="h-2 w-2 animate-spin rounded-full border border-white/20 border-t-white/80" />
-                                    )}
-                                  </span>
-                                  <span className={isIn ? "text-white" : "text-white/60"}>
-                                    {pl.name}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>
@@ -898,6 +940,53 @@ export default function PlaylistManager() {
           )}
         </div>
       </div>
+
+      {/* Fixed dropdown portal — rendered outside overflow containers */}
+      {openDropdownId !== null && dropdownPos && (
+        <div
+          data-dropdown
+          className="fixed z-50 min-w-[180px] rounded-lg border border-white/15 bg-neutral-900 py-1 shadow-xl"
+          style={{ top: dropdownPos.top, left: dropdownPos.left }}
+        >
+          <p className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-white/30">
+            Add to playlists
+          </p>
+          {playlists.map((pl) => {
+            const file = mediaFiles.find((f) => f.id === openDropdownId);
+            if (!file) return null;
+            const isIn = file.playlists?.some((p) => p.id === pl.id);
+            const isToggling = actionLoading === `toggle-file-${file.id}-${pl.id}`;
+            return (
+              <button
+                key={pl.id}
+                onClick={() => toggleFileInPlaylist(file, pl.id)}
+                disabled={isToggling}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-white/10 disabled:opacity-50"
+              >
+                <span
+                  className={`flex h-3.5 w-3.5 items-center justify-center rounded border ${
+                    isIn
+                      ? "border-green-400 bg-green-400/20"
+                      : "border-white/20"
+                  }`}
+                >
+                  {isIn && (
+                    <svg className="h-2.5 w-2.5 text-green-400" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
+                      <path d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  {isToggling && (
+                    <div className="h-2 w-2 animate-spin rounded-full border border-white/20 border-t-white/80" />
+                  )}
+                </span>
+                <span className={isIn ? "text-white" : "text-white/60"}>
+                  {pl.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -21,7 +21,7 @@ export default function NavMiniPlayer() {
       {/* Play/Pause button */}
       <button
         onClick={togglePlay}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/20 transition-colors hover:bg-white/10"
+        className="flex h-9 w-9 md:h-7 md:w-7 shrink-0 items-center justify-center rounded-full border border-white/20 transition-colors hover:bg-white/10"
       >
         {playing ? (
           <svg className="h-3 w-3 text-white" fill="currentColor" viewBox="0 0 24 24">
