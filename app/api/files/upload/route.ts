@@ -5,6 +5,23 @@ import { getSession } from "@/lib/auth";
 import { uploadToInternetArchive, sanitizeIdentifier } from "@/lib/internet-archive";
 import pool from "@/lib/db";
 
+function triggerNasSync() {
+  const webhookUrl = process.env.NAS_WEBHOOK_URL;
+  const webhookSecret = process.env.NAS_WEBHOOK_SECRET;
+  if (!webhookUrl || !webhookSecret) return;
+
+  fetch(webhookUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${webhookSecret}`,
+      "Content-Type": "application/json",
+    },
+    signal: AbortSignal.timeout(10000),
+  }).catch((err) => {
+    console.error("NAS sync webhook failed:", err.message);
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await getSession();
@@ -146,6 +163,9 @@ export async function POST(request: NextRequest) {
       // DB insert is secondary — don't fail the upload if DB has issues
       console.error("Failed to insert item into DB:", dbErr);
     }
+
+    // Trigger NAS rclone sync (fire-and-forget, don't block the response)
+    triggerNasSync();
 
     return NextResponse.json({
       success: true,

@@ -11,6 +11,8 @@ export async function GET() {
     user: {
       firstName: session.firstName,
       lastName: session.lastName,
+      role: session.role || "user",
+      canManage: session.canManage || false,
     },
   });
 }

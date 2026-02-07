@@ -6,7 +6,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
 import NavMiniPlayer from "./NavMiniPlayer";
 
-export default function Navbar({ userName }: { userName: string }) {
+export default function Navbar({ userName, isAdmin = false, canManage = false }: { userName: string; isAdmin?: boolean; canManage?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const [loggingOut, setLoggingOut] = useState(false);
@@ -71,16 +71,30 @@ export default function Navbar({ userName }: { userName: string }) {
         >
           Dashboard
         </Link>
-        <Link
-          href="/management"
-          className={`rounded px-3 py-1 text-sm transition-colors ${
-            pathname === "/management"
-              ? "bg-white/10 text-white"
-              : "text-white/50 hover:text-white/80"
-          }`}
-        >
-          Management
-        </Link>
+        {(isAdmin || canManage) && (
+          <Link
+            href="/management"
+            className={`rounded px-3 py-1 text-sm transition-colors ${
+              pathname === "/management"
+                ? "bg-white/10 text-white"
+                : "text-white/50 hover:text-white/80"
+            }`}
+          >
+            Management
+          </Link>
+        )}
+        {isAdmin && (
+          <Link
+            href="/admin"
+            className={`rounded px-3 py-1 text-sm transition-colors ${
+              pathname === "/admin"
+                ? "bg-yellow-500/20 text-yellow-300"
+                : "text-yellow-500/70 hover:text-yellow-400"
+            }`}
+          >
+            Admin
+          </Link>
+        )}
       </div>
 
       {/* Center: Mini Player (always centered) */}

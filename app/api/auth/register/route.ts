@@ -37,10 +37,10 @@ export async function POST(request: NextRequest) {
     const passwordHash = await bcrypt.hash(password, 12);
 
     const result = await pool.query(
-      `INSERT INTO public.users (email, first_name, last_name, password_hash)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, email, first_name, last_name`,
-      [email.toLowerCase(), firstName, lastName, passwordHash]
+      `INSERT INTO public.users (email, first_name, last_name, password_hash, role)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, email, first_name, last_name, role`,
+      [email.toLowerCase(), firstName, lastName, passwordHash, "user"]
     );
 
     const user = result.rows[0];
@@ -53,6 +53,8 @@ export async function POST(request: NextRequest) {
       email: user.email,
       firstName: user.first_name,
       lastName: user.last_name,
+      role: user.role || "user",
+      canManage: false,
     });
 
     const cookie = createSessionCookie(token);

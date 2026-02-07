@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await pool.query(
-      "SELECT id, email, first_name, last_name, password_hash FROM public.users WHERE email = $1",
+      "SELECT id, email, first_name, last_name, password_hash, role, can_manage FROM public.users WHERE email = $1",
       [email.toLowerCase()]
     );
 
@@ -41,6 +41,8 @@ export async function POST(request: NextRequest) {
       email: user.email,
       firstName: user.first_name,
       lastName: user.last_name,
+      role: user.role || "user",
+      canManage: user.can_manage || false,
     });
 
     const cookie = createSessionCookie(token);

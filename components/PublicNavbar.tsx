@@ -7,7 +7,7 @@ import { useRouter, usePathname } from "next/navigation";
 import NavMiniPlayer from "./NavMiniPlayer";
 
 export default function PublicNavbar() {
-  const [session, setSession] = useState<{ authenticated: boolean; user?: { firstName: string; lastName: string } } | null>(null);
+  const [session, setSession] = useState<{ authenticated: boolean; user?: { firstName: string; lastName: string; role?: string } } | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
@@ -68,6 +68,18 @@ export default function PublicNavbar() {
             >
               Management
             </Link>
+            {session.user?.role === "admin" && (
+              <Link
+                href="/admin"
+                className={`rounded px-3 py-1 text-sm transition-colors ${
+                  pathname === "/admin"
+                    ? "bg-yellow-500/20 text-yellow-300"
+                    : "text-yellow-500/70 hover:text-yellow-400"
+                }`}
+              >
+                Admin
+              </Link>
+            )}
           </>
         )}
       </div>

@@ -1,0 +1,30 @@
+services:
+  rclone-webhook:
+    image: rclone/rclone:latest
+    container_name: rclone-backblaze-sync
+    restart: unless-stopped
+    environment:
+      - RCLONE_CONFIG=/config/rclone/rclone.conf
+      - WEBHOOK_SECRET=9fa79ee9dd3d3f58c62fcd8594b3b9f89c269d0ddfd01ad46900f250cfdfe85f
+    volumes:
+      - ./config:/config
+      - ./data:/data
+      - ./cache:/root/.cache/rclone
+      - ./webhook.sh:/webhook.sh:ro
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        apk add --no-cache socat
+        echo "Webhook server ready on port 9222..."
+        socat TCP-LISTEN:9222,reuseaddr,fork EXEC:"/bin/sh /webhook.sh"
+    ports:
+      - "9222:9222"
+
+  cloudflare-tunnel-sync:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflare-tunnel-sync
+    restart: unless-stopped
+    command: tunnel --url http://rclone-backblaze-sync:9222
+    depends_on:
+      - rclone-webhook

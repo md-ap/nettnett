@@ -88,6 +88,11 @@ nettnett/
 │   ├── b2.ts                       # Backblaze B2 S3 client
 │   └── internet-archive.ts         # IA upload/delete via https
 ├── middleware.ts                    # Route protection
+├── nas/
+│   ├── docker-compose.yml          # NAS webhook + tunnel config
+│   ├── webhook.sh                  # HTTP handler for rclone sync
+│   ├── .env.example                # NAS env vars template
+│   └── SETUP.md                    # NAS setup instructions
 ├── public/
 │   └── logo_nettnett.jpg
 └── .env.local                      # All credentials
@@ -117,6 +122,10 @@ IA_S3_SECRET_KEY=your-ia-secret-key
 
 # AzuraCast Radio (NAS via Cloudflare Tunnel)
 NEXT_PUBLIC_AZURACAST_URL=https://[random].trycloudflare.com
+
+# NAS Sync Webhook (via Cloudflare quick tunnel)
+NAS_WEBHOOK_URL=https://[random].trycloudflare.com/sync
+NAS_WEBHOOK_SECRET=your-shared-webhook-secret
 ```
 
 ---
@@ -305,9 +314,54 @@ npm run build
 
 ## NAS Integration (UGREEN DXP4800 Plus)
 
-- **rclone (Docker):** Syncs Backblaze B2 bucket to NAS as backup
+- **rclone (Docker):** Syncs Backblaze B2 bucket to NAS on-demand via webhook
 - **Sync path:** `Shared Folder > docker > rclone > data > user_mario_alvarado`
-- **Purpose:** Local backup of all uploaded files + future radio streaming source
+- **Purpose:** Local backup of all uploaded files + radio streaming source for AzuraCast
+
+### NAS Sync Architecture (Webhook-based)
+
+Previously rclone ran `bisync` every 5 minutes, which caused excessive Backblaze API calls and exceeded the free tier cap. Now the sync is triggered on-demand after each upload.
+
+```
+Upload (Vercel) → B2 → Vercel calls POST /sync → NAS webhook → rclone copy B2→NAS
+```
+
+**NAS Docker containers:**
+- `rclone-backblaze-sync` — Webhook server (socat + rclone, port 9222). Listens for POST /sync, runs `rclone copy` in background
+- `cloudflare-tunnel-sync` — Quick tunnel exposing the webhook to internet
+- `azuracast` — Radio streaming server (Icecast + Liquidsoap)
+- `azuracast_updater` — AzuraCast auto-updater
+- `cloudflare-tunnel` — Quick tunnel for AzuraCast public access
+
+**Config files:** `nas/docker-compose.yml` and `nas/webhook.sh` in this repo. Copy to NAS at `/volume1/docker/rclone-webhook/` (or equivalent path).
+
+**Webhook auth:** Bearer token in `NAS_WEBHOOK_SECRET` env var (Vercel) must match `WEBHOOK_SECRET` in NAS docker-compose.
+
+**Upload route integration:** `triggerNasSync()` in `app/api/files/upload/route.ts` calls the webhook fire-and-forget after successful B2 upload.
+
+### Cloudflare Tunnels
+
+Currently using **two quick tunnels** (free, no domain required):
+
+| Tunnel | Container | Exposes | Purpose |
+|--------|-----------|---------|---------|
+| AzuraCast | `cloudflare-tunnel` | `http://azuracast:8080` | Public radio streaming |
+| Sync webhook | `cloudflare-tunnel-sync` | `http://rclone-backblaze-sync:9222` | Upload sync trigger |
+
+**Quick tunnel limitation:** URL is random (`https://[random].trycloudflare.com`) and changes if container restarts. When URL changes:
+- AzuraCast tunnel: Update `NEXT_PUBLIC_AZURACAST_URL` in Vercel
+- Sync tunnel: Update `NAS_WEBHOOK_URL` in Vercel
+- Check new URLs with: `docker logs cloudflare-tunnel` / `docker logs cloudflare-tunnel-sync`
+
+### TODO: Migrate to Named Tunnel
+
+When a domain is available, replace both quick tunnels with a **single Cloudflare named tunnel** (free via Zero Trust dashboard):
+- Fixed URL that never changes (no more updating env vars on restart)
+- Single tunnel with multiple public hostnames:
+  - `radio.yourdomain.com` → `http://azuracast:8080`
+  - `sync.yourdomain.com` → `http://rclone-backblaze-sync:9222`
+- Replace `cloudflare-tunnel` and `cloudflare-tunnel-sync` containers with one named tunnel container using a token
+- Also consider **Backblaze B2 Event Notifications** as alternative to Vercel-triggered sync (B2 sends webhook directly to NAS on file upload, removing the need for code in upload route)
 
 ---
 

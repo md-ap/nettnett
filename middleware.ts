@@ -5,6 +5,7 @@ export function middleware(request: NextRequest) {
   const isLoginPage = request.nextUrl.pathname === "/login";
   const isDashboard = request.nextUrl.pathname.startsWith("/dashboard");
   const isManagement = request.nextUrl.pathname.startsWith("/management");
+  const isAdmin = request.nextUrl.pathname.startsWith("/admin");
 
   // Logged-in users visiting /login → redirect to /dashboard
   if (isLoginPage && token) {
@@ -12,7 +13,7 @@ export function middleware(request: NextRequest) {
   }
 
   // Unauthenticated users visiting protected routes → redirect to /login
-  if ((isDashboard || isManagement) && !token) {
+  if ((isDashboard || isManagement || isAdmin) && !token) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
@@ -20,5 +21,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/login", "/dashboard/:path*", "/management/:path*"],
+  matcher: ["/login", "/dashboard/:path*", "/management/:path*", "/admin/:path*"],
 };
