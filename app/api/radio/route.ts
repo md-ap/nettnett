@@ -22,11 +22,14 @@ export async function GET(request: NextRequest) {
     playlists: `/api/station/${STATION_ID}/playlists`,
     files: `/api/station/${STATION_ID}/files`,
     queue: `/api/station/${STATION_ID}/queue`,
+    schedule: `/api/station/${STATION_ID}/schedule`,
+    streamers: `/api/station/${STATION_ID}/streamers`,
   };
 
   // Dynamic endpoints with IDs
   const playlistMatch = endpoint.match(/^playlist\/(\d+)$/);
   const playlistSongsMatch = endpoint.match(/^playlist\/(\d+)\/songs$/);
+  const streamerMatch = endpoint.match(/^streamer\/(\d+)$/);
 
   let apiPath: string;
 
@@ -36,6 +39,8 @@ export async function GET(request: NextRequest) {
     apiPath = `/api/station/${STATION_ID}/playlist/${playlistMatch[1]}`;
   } else if (playlistSongsMatch) {
     apiPath = `/api/station/${STATION_ID}/playlist/${playlistSongsMatch[1]}/songs`;
+  } else if (streamerMatch) {
+    apiPath = `/api/station/${STATION_ID}/streamer/${streamerMatch[1]}`;
   } else {
     return NextResponse.json({ error: "Invalid endpoint" }, { status: 400 });
   }
@@ -122,6 +127,28 @@ export async function POST(request: NextRequest) {
         apiPath = `/api/station/${STATION_ID}/playlist/${playlistId}`;
         method = "DELETE";
         break;
+      case "schedule-playlist":
+        apiPath = `/api/station/${STATION_ID}/playlist/${playlistId}`;
+        method = "PUT";
+        break;
+      case "unschedule-playlist":
+        apiPath = `/api/station/${STATION_ID}/playlist/${playlistId}`;
+        method = "PUT";
+        break;
+      case "create-streamer":
+        apiPath = `/api/station/${STATION_ID}/streamers`;
+        break;
+      case "update-streamer":
+        apiPath = `/api/station/${STATION_ID}/streamer/${body.streamerId}`;
+        method = "PUT";
+        break;
+      case "delete-streamer":
+        apiPath = `/api/station/${STATION_ID}/streamer/${body.streamerId}`;
+        method = "DELETE";
+        break;
+      case "disconnect-streamer":
+        apiPath = `/api/station/${STATION_ID}/backend/disconnect`;
+        break;
       default:
         return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
@@ -167,6 +194,46 @@ export async function POST(request: NextRequest) {
       fetchOptions.body = JSON.stringify({
         order: body.order, // array of media IDs in desired order
       });
+    }
+
+    // Schedule a playlist (set type to scheduled with schedule_items)
+    if (action === "schedule-playlist") {
+      fetchOptions.body = JSON.stringify({
+        type: "scheduled",
+        schedule_items: body.scheduleItems,
+      });
+    }
+
+    // Unschedule a playlist (revert to default type)
+    if (action === "unschedule-playlist") {
+      fetchOptions.body = JSON.stringify({
+        type: "default",
+        schedule_items: [],
+      });
+    }
+
+    // Create a new streamer/DJ account
+    if (action === "create-streamer") {
+      fetchOptions.body = JSON.stringify({
+        streamer_username: body.username,
+        streamer_password: body.password,
+        display_name: body.displayName,
+        is_active: body.isActive ?? true,
+        enforce_schedule: body.enforceSchedule ?? false,
+        comments: body.comments || "",
+      });
+    }
+
+    // Update streamer settings
+    if (action === "update-streamer") {
+      const updateData: Record<string, unknown> = {};
+      if (body.username !== undefined) updateData.streamer_username = body.username;
+      if (body.password) updateData.streamer_password = body.password;
+      if (body.displayName !== undefined) updateData.display_name = body.displayName;
+      if (body.isActive !== undefined) updateData.is_active = body.isActive;
+      if (body.enforceSchedule !== undefined) updateData.enforce_schedule = body.enforceSchedule;
+      if (body.comments !== undefined) updateData.comments = body.comments;
+      fetchOptions.body = JSON.stringify(updateData);
     }
 
     // Create playlist with default settings

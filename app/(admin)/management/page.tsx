@@ -2,8 +2,7 @@ import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import pool from "@/lib/db";
 import ManagementGate from "@/components/ManagementGate";
-import NowPlayingControl from "@/components/NowPlayingControl";
-import PlaylistManager from "@/components/PlaylistManager";
+import ManagementTabs from "@/components/ManagementTabs";
 
 export const dynamic = "force-dynamic";
 
@@ -30,11 +29,7 @@ export default async function ManagementPage() {
       </h1>
 
       <ManagementGate>
-        {/* Now Playing controls */}
-        <NowPlayingControl />
-
-        {/* Playlist & Media Manager */}
-        <PlaylistManager />
+        <ManagementTabs />
       </ManagementGate>
     </div>
   );
