@@ -196,18 +196,59 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Schedule a playlist (set type to scheduled with schedule_items)
+    // Schedule a playlist — send schedule_items to AzuraCast
+    // IMPORTANT: Do NOT send "type" field — AzuraCast uses an enum (PlaylistTypes)
+    // that does NOT have a "scheduled" value. Sending it causes a 500 error.
+    // Scheduling works by adding schedule_items to any playlist type.
+    // AzuraCast uses: start_time/end_time as integers (e.g. 900=09:00, 2200=22:00)
+    // and days as ISO-8601 (1=Monday, 7=Sunday) — NOT JS days (0=Sunday, 6=Saturday)
     if (action === "schedule-playlist") {
-      fetchOptions.body = JSON.stringify({
-        type: "scheduled",
-        schedule_items: body.scheduleItems,
-      });
+      const convertedItems = (body.scheduleItems || []).map(
+        (item: {
+          id?: number;
+          start_time: string | number;
+          end_time: string | number;
+          days: number[];
+          start_date?: string;
+          end_date?: string;
+          loop_once?: boolean;
+        }) => {
+          // Convert "HH:MM" string → integer (e.g. "09:00" → 900, "22:30" → 2230)
+          const toTimeInt = (t: string | number): number => {
+            if (typeof t === "number") return t;
+            const parts = t.split(":");
+            return parseInt(parts[0]) * 100 + parseInt(parts[1]);
+          };
+          // Convert JS day (0=Sun..6=Sat) → ISO day (1=Mon..7=Sun)
+          const toIsoDays = (jsDays: number[]): number[] =>
+            jsDays.map((d) => (d === 0 ? 7 : d));
+
+          const converted: Record<string, unknown> = {
+            start_time: toTimeInt(item.start_time),
+            end_time: toTimeInt(item.end_time),
+            days: toIsoDays(item.days || []),
+          };
+          if (item.id) converted.id = item.id;
+          if (item.start_date) converted.start_date = item.start_date;
+          if (item.end_date) converted.end_date = item.end_date;
+          if (item.loop_once) converted.loop_once = true;
+          return converted;
+        }
+      );
+
+      const scheduleBody: Record<string, unknown> = {
+        schedule_items: convertedItems,
+      };
+      // Include backend_options (e.g. ["interrupt"]) so Liquidsoap interrupts current song
+      if (body.backendOptions && Array.isArray(body.backendOptions)) {
+        scheduleBody.backend_options = body.backendOptions;
+      }
+      fetchOptions.body = JSON.stringify(scheduleBody);
     }
 
-    // Unschedule a playlist (revert to default type)
+    // Unschedule a playlist (remove all schedule items)
     if (action === "unschedule-playlist") {
       fetchOptions.body = JSON.stringify({
-        type: "default",
         schedule_items: [],
       });
     }
@@ -243,18 +284,29 @@ export async function POST(request: NextRequest) {
         type: "default",
         source: "songs",
         order: "sequential",
-        is_enabled: false,
+        is_enabled: body.is_enabled ?? false,
       });
     }
+
+    // Log outgoing request for debugging schedule issues
+    console.log(`[AzuraCast ${method}] ${apiPath}`, fetchOptions.body ? JSON.parse(fetchOptions.body as string) : "(no body)");
 
     const res = await fetch(`${AZURACAST_URL}${apiPath}`, fetchOptions);
 
     // Some endpoints return 204 No Content
     if (res.status === 204) {
+      console.log(`[AzuraCast] Response: 204 No Content`);
       return NextResponse.json({ success: true });
     }
 
     const data = await res.json();
+    console.log(`[AzuraCast] Response ${res.status}:`, JSON.stringify(data).slice(0, 500));
+
+    // If AzuraCast returned an error, pass it through
+    if (res.status >= 400) {
+      return NextResponse.json(data, { status: res.status });
+    }
+
     return NextResponse.json(data);
   } catch (error) {
     console.error("AzuraCast action error:", error);

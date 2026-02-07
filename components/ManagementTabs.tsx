@@ -20,8 +20,8 @@ export default function ManagementTabs() {
 
   return (
     <div>
-      {/* Tab bar — scrollable on mobile */}
-      <div className="flex overflow-x-auto border-b border-white/10 mb-6 -mx-1">
+      {/* Tab bar — scrollable on mobile, hidden scrollbar */}
+      <div className="flex overflow-x-auto border-b border-white/10 mb-6 -mx-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {tabs.map((tab) => (
           <button
             key={tab.id}

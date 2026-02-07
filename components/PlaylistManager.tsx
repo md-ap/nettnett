@@ -18,6 +18,15 @@ interface MediaFile {
   playlists: Array<{ id: number; name: string }>;
 }
 
+interface ScheduleItem {
+  start_time: number;
+  end_time: number;
+  days: number[];
+  start_date?: string;
+  end_date?: string;
+  loop_once?: boolean;
+}
+
 interface Playlist {
   id: number;
   name: string;
@@ -27,6 +36,8 @@ interface Playlist {
   type: string;
   weight: number;
   order: string;
+  schedule_items?: ScheduleItem[];
+  backend_options?: string[];
 }
 
 export default function PlaylistManager() {
@@ -77,6 +88,21 @@ export default function PlaylistManager() {
             }
           }
         }
+        // Fetch details for each playlist to get schedule_items
+        const detailPromises = data.map(async (pl: Playlist) => {
+          try {
+            const detailRes = await fetch(`/api/radio?endpoint=playlist/${pl.id}`, { cache: "no-store" });
+            const detail = await detailRes.json();
+            pl.schedule_items = detail.schedule_items || [];
+            pl.backend_options = detail.backend_options || [];
+          } catch {
+            pl.schedule_items = [];
+            pl.backend_options = [];
+          }
+          return pl;
+        });
+        await Promise.all(detailPromises);
+
         // Sort by weight (higher weight = higher priority = first)
         const sorted = [...data].sort((a: Playlist, b: Playlist) => (b.weight || 0) - (a.weight || 0));
         setPlaylists(sorted);
@@ -651,7 +677,30 @@ export default function PlaylistManager() {
                             SEQ
                           </span>
                         )}
+                        {pl.schedule_items && pl.schedule_items.length > 0 && (
+                          <span className="rounded bg-purple-500/15 px-1.5 py-0.5 text-[9px] text-purple-400">
+                            SCHEDULED
+                          </span>
+                        )}
                       </div>
+                      {/* Schedule details line */}
+                      {pl.schedule_items && pl.schedule_items.length > 0 && (
+                        <div className="mt-0.5 text-[10px] text-purple-400/60">
+                          {pl.schedule_items.map((si, idx) => {
+                            const dayNames = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+                            const days = (si.days || []).map(d => dayNames[d] || "?").join(", ");
+                            const st = `${String(Math.floor(si.start_time / 100)).padStart(2, "0")}:${String(si.start_time % 100).padStart(2, "0")}`;
+                            const et = `${String(Math.floor(si.end_time / 100)).padStart(2, "0")}:${String(si.end_time % 100).padStart(2, "0")}`;
+                            return (
+                              <span key={idx}>
+                                {idx > 0 && " | "}
+                                {days} {st}-{et}
+                              </span>
+                            );
+                          })}
+                          {" — Only plays during scheduled time"}
+                        </div>
+                      )}
                     </button>
 
                     {/* Expand arrow */}
