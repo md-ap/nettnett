@@ -175,11 +175,8 @@ export async function POST(request: NextRequest) {
     triggerNasSync();
 
     // If uploading to IA, trigger NAS IA upload webhook (fire-and-forget)
-    // Small delay to let rclone sync start first
     if (uploadToIA && iaIdentifier) {
-      setTimeout(() => {
-        triggerNasIaUpload({ userFolder, titleFolder, iaIdentifier: iaIdentifier! });
-      }, 3000);
+      triggerNasIaUpload({ userFolder, titleFolder, iaIdentifier: iaIdentifier! });
     }
 
     return NextResponse.json({
