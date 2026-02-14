@@ -34,7 +34,7 @@ const LANGUAGES = [
   { value: "tur", label: "Turkish" },
 ];
 
-export default function UploadForm({ disabled = false }: { disabled?: boolean }) {
+export default function UploadForm({ disabled = false, onRefresh }: { disabled?: boolean; onRefresh?: () => void }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [mediatype, setMediatype] = useState("data");
@@ -201,6 +201,7 @@ export default function UploadForm({ disabled = false }: { disabled?: boolean })
       setLanguage("");
       setUploadToIA(false);
       setFiles([]);
+      if (onRefresh) onRefresh();
       router.refresh();
     } catch {
       setError("Network error. Please try again.");

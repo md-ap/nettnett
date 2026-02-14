@@ -56,10 +56,15 @@ export default function DashboardItems() {
     return () => clearInterval(interval);
   }, [b2Down, fetchItems]);
 
+  // Refresh callback for child components
+  const refreshItems = useCallback(() => {
+    fetchItems();
+  }, [fetchItems]);
+
   return (
     <div className="space-y-8">
       {/* Upload form — disabled when B2 is down */}
-      <UploadForm disabled={b2Down} />
+      <UploadForm disabled={b2Down} onRefresh={refreshItems} />
 
       {/* B2 status banner */}
       {b2Down && (
@@ -90,7 +95,7 @@ export default function DashboardItems() {
       )}
 
       {/* Items list */}
-      {!loading && !b2Down && <ItemList items={items} />}
+      {!loading && !b2Down && <ItemList items={items} onRefresh={refreshItems} />}
     </div>
   );
 }
