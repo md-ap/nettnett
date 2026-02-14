@@ -5,21 +5,52 @@ import { getSession } from "@/lib/auth";
 import { uploadToInternetArchive, sanitizeIdentifier } from "@/lib/internet-archive";
 import pool from "@/lib/db";
 
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  label: string,
+  retries = 3
+) {
+  const timeouts = [10000, 15000, 20000];
+  const delays = [0, 5000, 10000];
+
+  for (let i = 0; i < retries; i++) {
+    try {
+      if (delays[i] > 0) {
+        await new Promise((r) => setTimeout(r, delays[i]));
+      }
+      await fetch(url, {
+        ...options,
+        signal: AbortSignal.timeout(timeouts[i]),
+      });
+      console.log(`${label}: succeeded on attempt ${i + 1}`);
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`${label}: attempt ${i + 1}/${retries} failed: ${msg}`);
+      if (i === retries - 1) {
+        console.error(`${label}: all ${retries} attempts failed`);
+      }
+    }
+  }
+}
+
 function triggerNasSync() {
   const webhookUrl = process.env.NAS_WEBHOOK_URL;
   const webhookSecret = process.env.NAS_WEBHOOK_SECRET;
   if (!webhookUrl || !webhookSecret) return;
 
-  fetch(webhookUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${webhookSecret}`,
-      "Content-Type": "application/json",
+  fetchWithRetry(
+    webhookUrl,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${webhookSecret}`,
+        "Content-Type": "application/json",
+      },
     },
-    signal: AbortSignal.timeout(10000),
-  }).catch((err) => {
-    console.error("NAS sync webhook failed:", err.message);
-  });
+    "NAS sync webhook"
+  );
 }
 
 export async function POST(request: NextRequest) {
