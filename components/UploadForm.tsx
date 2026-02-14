@@ -66,6 +66,36 @@ export default function UploadForm({ disabled = false }: { disabled?: boolean })
     disabled: isDisabled,
   });
 
+  function uploadFileWithProgress(
+    url: string,
+    file: File,
+    onProgress: (loaded: number) => void
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", url, true);
+      xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress(e.loaded);
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+        } else {
+          reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error("Network error during upload"));
+      xhr.ontimeout = () => reject(new Error("Upload timed out"));
+      xhr.send(file);
+    });
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -79,57 +109,79 @@ export default function UploadForm({ disabled = false }: { disabled?: boolean })
     setUploading(true);
     setProgressPercent(0);
 
-    const totalSteps = uploadToIA ? 3 : 2;
-    let currentStep = 0;
+    const totalSteps = 3;
 
     try {
-      // Step 1: Uploading to Cloud
-      currentStep = 1;
-      setProgressText(
-        uploadToIA
-          ? `Step ${currentStep}/${totalSteps}: Uploading to Cloud...`
-          : `Step ${currentStep}/${totalSteps}: Uploading files...`
-      );
-      setProgressPercent(10);
+      // ── Step 1: Get presigned URLs ──
+      setProgressText(`Step 1/${totalSteps}: Preparing upload...`);
+      setProgressPercent(5);
 
-      const formData = new FormData();
-      formData.append("title", title.trim());
-      formData.append("description", description.trim());
-      formData.append("mediatype", mediatype);
-      formData.append("uploadToIA", String(uploadToIA));
-
-      if (creator.trim()) formData.append("creator", creator.trim());
-      if (date) formData.append("date", date);
-      if (subject.trim()) formData.append("subject", subject.trim());
-      if (language.trim()) formData.append("language", language.trim());
-
-      for (const file of files) {
-        formData.append("files", file);
-      }
-
-      setProgressPercent(30);
-      setProgressText(
-        uploadToIA
-          ? `Step ${currentStep}/${totalSteps}: Uploading ${files.length} file${files.length !== 1 ? "s" : ""} to Cloud...`
-          : `Step ${currentStep}/${totalSteps}: Uploading ${files.length} file${files.length !== 1 ? "s" : ""}...`
-      );
-
-      const res = await fetch("/api/files/upload", {
+      const presignRes = await fetch("/api/files/presign", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title.trim(),
+          files: files.map((f) => ({ name: f.name, type: f.type, size: f.size })),
+        }),
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || "Upload failed");
+      if (!presignRes.ok) {
+        const data = await presignRes.json();
+        setError(data.error || "Failed to prepare upload");
         return;
       }
 
-      // Step 2 (or 3): Saving metadata
-      setProgressPercent(uploadToIA ? 80 : 90);
-      currentStep = totalSteps;
-      setProgressText(`Step ${currentStep}/${totalSteps}: Finalizing...`);
+      const { titleFolder, presignedUrls } = await presignRes.json();
+
+      // ── Step 2: Upload files directly to Cloud ──
+      setProgressText(`Step 2/${totalSteps}: Uploading to Cloud...`);
+      setProgressPercent(10);
+
+      const fileTotalSize = files.reduce((acc, f) => acc + f.size, 0);
+      let uploadedSize = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const presigned = presignedUrls[i];
+
+        setProgressText(
+          `Step 2/${totalSteps}: Uploading ${file.name} (${i + 1}/${files.length})...`
+        );
+
+        await uploadFileWithProgress(presigned.uploadUrl, file, (loaded) => {
+          const currentProgress = 10 + ((uploadedSize + loaded) / fileTotalSize) * 70;
+          setProgressPercent(Math.min(Math.round(currentProgress), 80));
+        });
+
+        uploadedSize += file.size;
+      }
+
+      // ── Step 3: Finalize ──
+      setProgressText(`Step 3/${totalSteps}: Finalizing...`);
+      setProgressPercent(85);
+
+      const finalizeRes = await fetch("/api/files/finalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title.trim(),
+          titleFolder,
+          description: description.trim(),
+          mediatype,
+          creator: creator.trim() || undefined,
+          date: date || undefined,
+          subject: subject.trim() || undefined,
+          language: language || undefined,
+          uploadToIA,
+          uploadedFiles: files.map((f) => ({ name: f.name, size: f.size })),
+        }),
+      });
+
+      if (!finalizeRes.ok) {
+        const data = await finalizeRes.json();
+        setError(data.error || "Failed to finalize upload");
+        return;
+      }
 
       setProgressPercent(100);
 

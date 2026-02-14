@@ -1,4 +1,5 @@
-import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, PutBucketCorsCommand, ListObjectsV2Command, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export const s3Client = new S3Client({
   endpoint: process.env.B2_ENDPOINT,
@@ -16,6 +17,38 @@ export function getUserFolder(firstName: string, lastName: string): string {
   const clean = (s: string) =>
     s.toLowerCase().trim().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
   return `user_${clean(firstName)}_${clean(lastName)}`;
+}
+
+export async function getPresignedUploadUrl(
+  key: string,
+  contentType: string,
+  expiresIn: number = 1800
+): Promise<string> {
+  const command = new PutObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: key,
+    ContentType: contentType,
+  });
+  return getSignedUrl(s3Client, command, { expiresIn });
+}
+
+export async function configureBucketCors(allowedOrigins: string[]) {
+  await s3Client.send(
+    new PutBucketCorsCommand({
+      Bucket: BUCKET_NAME,
+      CORSConfiguration: {
+        CORSRules: [
+          {
+            AllowedOrigins: allowedOrigins,
+            AllowedMethods: ["PUT", "GET", "HEAD"],
+            AllowedHeaders: ["*"],
+            ExposeHeaders: ["ETag"],
+            MaxAgeSeconds: 3600,
+          },
+        ],
+      },
+    })
+  );
 }
 
 export async function createUserFolder(firstName: string, lastName: string) {

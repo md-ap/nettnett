@@ -6,6 +6,8 @@ services:
     environment:
       - RCLONE_CONFIG=/config/rclone/rclone.conf
       - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - IA_S3_ACCESS_KEY=${IA_S3_ACCESS_KEY}
+      - IA_S3_SECRET_KEY=${IA_S3_SECRET_KEY}
     volumes:
       - ./config:/config
       - ./data:/data
@@ -15,7 +17,7 @@ services:
     command:
       - -c
       - |
-        apk add --no-cache socat
+        apk add --no-cache socat curl jq
         echo "Webhook server ready on port 9222..."
         socat TCP-LISTEN:9222,reuseaddr,fork EXEC:"/bin/sh /webhook.sh"
     ports:
