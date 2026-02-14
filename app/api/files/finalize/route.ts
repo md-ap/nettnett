@@ -61,7 +61,10 @@ async function triggerNasIaUpload(data: {
   const webhookSecret = process.env.NAS_WEBHOOK_SECRET;
   if (!webhookUrl || !webhookSecret) return;
 
-  const iaWebhookUrl = webhookUrl.replace("/sync", "/ia-upload");
+  // Replace only the trailing path, not the hostname (webhookUrl contains "sync" in both hostname and path)
+  const iaWebhookUrl = webhookUrl.endsWith("/sync")
+    ? webhookUrl.slice(0, -5) + "/ia-upload"
+    : webhookUrl + "/ia-upload";
   console.log(`triggerNasIaUpload: calling ${iaWebhookUrl} with`, JSON.stringify(data));
 
   await fetchWithRetry(
