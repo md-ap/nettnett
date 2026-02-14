@@ -59,25 +59,26 @@ fi
 
 # ── POST /ia-upload — Upload files to Internet Archive ──
 if [ "$METHOD" = "POST" ] && [ "$PATH_REQ" = "/ia-upload" ]; then
+  # Parse JSON body BEFORE background process (socat loses $BODY in subshell via Cloudflare Tunnel)
+  USER_FOLDER=$(echo "$BODY" | jq -r '.userFolder // empty')
+  TITLE_FOLDER=$(echo "$BODY" | jq -r '.titleFolder // empty')
+  IA_IDENTIFIER=$(echo "$BODY" | jq -r '.iaIdentifier // empty')
+
   RESPONSE='{"status":"ia-upload started"}'
   printf "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" ${#RESPONSE} "$RESPONSE"
 
-  # Run IA upload in background
+  # Validate before fork
+  if [ -z "$USER_FOLDER" ] || [ -z "$TITLE_FOLDER" ] || [ -z "$IA_IDENTIFIER" ]; then
+    echo "[$(date)] ERROR: Missing required fields. Body was: $BODY" >> /config/ia-upload.log
+    exit 0
+  fi
+
+  ITEM_PATH="/data/${USER_FOLDER}/${TITLE_FOLDER}"
+
+  # Run IA upload in background (only uses pre-parsed variables, not $BODY)
   (
-    echo "[$(date)] IA upload triggered"
-    echo "[$(date)] Body: $BODY"
-
-    # Parse JSON body with jq
-    USER_FOLDER=$(echo "$BODY" | jq -r '.userFolder // empty')
-    TITLE_FOLDER=$(echo "$BODY" | jq -r '.titleFolder // empty')
-    IA_IDENTIFIER=$(echo "$BODY" | jq -r '.iaIdentifier // empty')
-
-    if [ -z "$USER_FOLDER" ] || [ -z "$TITLE_FOLDER" ] || [ -z "$IA_IDENTIFIER" ]; then
-      echo "[$(date)] ERROR: Missing required fields (userFolder, titleFolder, iaIdentifier)"
-      exit 1
-    fi
-
-    ITEM_PATH="/data/${USER_FOLDER}/${TITLE_FOLDER}"
+    echo "[$(date)] IA upload triggered for ${IA_IDENTIFIER}"
+    echo "[$(date)] userFolder=${USER_FOLDER} titleFolder=${TITLE_FOLDER}"
 
     # Step 1: Sync just this item folder from B2 to ensure files are local
     echo "[$(date)] Syncing item folder from B2..."
