@@ -77,6 +77,10 @@ export async function POST(request: NextRequest) {
       uploadedFiles.push({ name: file.name, size: file.size });
     }
 
+    // Trigger NAS rclone sync right after B2 upload (fire-and-forget)
+    // Moved here so NAS sync doesn't depend on IA upload completing
+    triggerNasSync();
+
     // Upload to Internet Archive if checked
     let iaIdentifier: string | null = null;
     let iaUrl: string | null = null;
@@ -163,9 +167,6 @@ export async function POST(request: NextRequest) {
       // DB insert is secondary — don't fail the upload if DB has issues
       console.error("Failed to insert item into DB:", dbErr);
     }
-
-    // Trigger NAS rclone sync (fire-and-forget, don't block the response)
-    triggerNasSync();
 
     return NextResponse.json({
       success: true,
