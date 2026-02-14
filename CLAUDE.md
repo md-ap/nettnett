@@ -43,8 +43,9 @@ User (Browser)
         │     ├── Icecast (streaming server)
         │     └── Liquidsoap (auto-DJ)
         ├── rclone (Docker) → B2 backup sync
-        └── Cloudflare Tunnel (Docker) → Public access
-              └── https://[random].trycloudflare.com
+        └── Cloudflare Named Tunnel (Docker) → Public access
+              ├── radio.radionettnettstream.com → AzuraCast
+              └── sync.radionettnettstream.com → rclone webhook
 ```
 
 ---
@@ -120,11 +121,11 @@ B2_REGION=us-west-004
 IA_S3_ACCESS_KEY=your-ia-access-key
 IA_S3_SECRET_KEY=your-ia-secret-key
 
-# AzuraCast Radio (NAS via Cloudflare Tunnel)
-NEXT_PUBLIC_AZURACAST_URL=https://[random].trycloudflare.com
+# AzuraCast Radio (NAS via Cloudflare Named Tunnel)
+NEXT_PUBLIC_AZURACAST_URL=https://radio.radionettnettstream.com
 
-# NAS Sync Webhook (via Cloudflare quick tunnel)
-NAS_WEBHOOK_URL=https://[random].trycloudflare.com/sync
+# NAS Sync Webhook (via Cloudflare Named Tunnel)
+NAS_WEBHOOK_URL=https://sync.radionettnettstream.com/sync
 NAS_WEBHOOK_SECRET=your-shared-webhook-secret
 ```
 
@@ -172,13 +173,12 @@ NAS_WEBHOOK_SECRET=your-shared-webhook-secret
 - **Runs on:** UGREEN DXP4800 Plus NAS (Docker)
 - **Installation path:** `/volume1/docker/azuracast/`
 - **Local access:** `http://192.168.1.102:8080`
-- **Public access:** Via Cloudflare quick tunnel (URL changes on restart)
+- **Public access:** Via Cloudflare Named Tunnel → `https://radio.radionettnettstream.com`
 - **Admin login:** `admin@admin.com` (local only)
 - **Station name:** `nettnett`
 - **Components:** Icecast (streaming) + Liquidsoap (auto-DJ)
-- **Stream URL:** `${AZURACAST_URL}/listen/nettnett/radio.mp3`
-- **Now Playing API:** `${AZURACAST_URL}/api/nowplaying/nettnett`
-- **Quick tunnel note:** URL is random and changes if container restarts. Check new URL with: `sudo docker logs cloudflare-tunnel`
+- **Stream URL:** `https://radio.radionettnettstream.com/listen/nettnett/radio.mp3`
+- **Now Playing API:** `https://radio.radionettnettstream.com/api/nowplaying/nettnett`
 - **Docker containers on NAS:** `azuracast`, `azuracast_updater`, `cloudflare-tunnel`, `rclone-backblaze-sync`, `qbittorrent`
 
 ---
@@ -328,40 +328,28 @@ Upload (Vercel) → B2 → Vercel calls POST /sync → NAS webhook → rclone co
 
 **NAS Docker containers:**
 - `rclone-backblaze-sync` — Webhook server (socat + rclone, port 9222). Listens for POST /sync, runs `rclone copy` in background
-- `cloudflare-tunnel-sync` — Quick tunnel exposing the webhook to internet
+- `cloudflare-tunnel` — Named tunnel exposing both AzuraCast and webhook via `radionettnettstream.com` subdominios
 - `azuracast` — Radio streaming server (Icecast + Liquidsoap)
 - `azuracast_updater` — AzuraCast auto-updater
-- `cloudflare-tunnel` — Quick tunnel for AzuraCast public access
 
-**Config files:** `nas/docker-compose.yml` and `nas/webhook.sh` in this repo. Copy to NAS at `/volume1/docker/rclone-webhook/` (or equivalent path).
+**Config files:** `nas/docker-compose.yaml` and `nas/webhook.sh` in this repo. Copy to NAS at `/volume1/docker/rclone-webhook/` (or equivalent path).
 
-**Webhook auth:** Bearer token in `NAS_WEBHOOK_SECRET` env var (Vercel) must match `WEBHOOK_SECRET` in NAS docker-compose.
+**Webhook auth:** Bearer token in `NAS_WEBHOOK_SECRET` env var (Vercel) must match `WEBHOOK_SECRET` in NAS `.env`.
 
 **Upload route integration:** `triggerNasSync()` in `app/api/files/upload/route.ts` calls the webhook fire-and-forget after successful B2 upload.
 
-### Cloudflare Tunnels
+### Cloudflare Named Tunnel (radionettnettstream.com)
 
-Currently using **two quick tunnels** (free, no domain required):
+Using a **single Named Tunnel** with two public hostnames (fixed URLs, never change):
 
-| Tunnel | Container | Exposes | Purpose |
-|--------|-----------|---------|---------|
-| AzuraCast | `cloudflare-tunnel` | `http://azuracast:8080` | Public radio streaming |
-| Sync webhook | `cloudflare-tunnel-sync` | `http://rclone-backblaze-sync:9222` | Upload sync trigger |
+| Subdomain | Service URL | Purpose |
+|-----------|-------------|---------|
+| `radio.radionettnettstream.com` | `azuracast:8080` | Public radio streaming |
+| `sync.radionettnettstream.com` | `rclone-backblaze-sync:9222` | Upload sync trigger |
 
-**Quick tunnel limitation:** URL is random (`https://[random].trycloudflare.com`) and changes if container restarts. When URL changes:
-- AzuraCast tunnel: Update `NEXT_PUBLIC_AZURACAST_URL` in Vercel
-- Sync tunnel: Update `NAS_WEBHOOK_URL` in Vercel
-- Check new URLs with: `docker logs cloudflare-tunnel` / `docker logs cloudflare-tunnel-sync`
-
-### TODO: Migrate to Named Tunnel
-
-When a domain is available, replace both quick tunnels with a **single Cloudflare named tunnel** (free via Zero Trust dashboard):
-- Fixed URL that never changes (no more updating env vars on restart)
-- Single tunnel with multiple public hostnames:
-  - `radio.yourdomain.com` → `http://azuracast:8080`
-  - `sync.yourdomain.com` → `http://rclone-backblaze-sync:9222`
-- Replace `cloudflare-tunnel` and `cloudflare-tunnel-sync` containers with one named tunnel container using a token
-- Also consider **Backblaze B2 Event Notifications** as alternative to Vercel-triggered sync (B2 sends webhook directly to NAS on file upload, removing the need for code in upload route)
+**Vercel env vars (fixed, no more updating):**
+- `NEXT_PUBLIC_AZURACAST_URL` = `https://radio.radionettnettstream.com`
+- `NAS_WEBHOOK_URL` = `https://sync.radionettnettstream.com/sync`
 
 ---
 

@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       - RCLONE_CONFIG=/config/rclone/rclone.conf
-      - WEBHOOK_SECRET=9fa79ee9dd3d3f58c62fcd8594b3b9f89c269d0ddfd01ad46900f250cfdfe85f
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
     volumes:
       - ./config:/config
       - ./data:/data
@@ -21,10 +21,16 @@ services:
     ports:
       - "9222:9222"
 
-  cloudflare-tunnel-sync:
+  # Named tunnel - reemplaza los 2 quick tunnels con 1 solo container
+  # Los subdominios se configuran en Cloudflare Zero Trust dashboard:
+  #   radio.radionettnettstream.com -> 192.168.1.102:8080
+  #   sync.radionettnettstream.com  -> rclone-backblaze-sync:9222
+  cloudflare-tunnel:
     image: cloudflare/cloudflared:latest
-    container_name: cloudflare-tunnel-sync
+    container_name: cloudflare-tunnel
     restart: unless-stopped
-    command: tunnel --url http://rclone-backblaze-sync:9222
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
       - rclone-webhook
