@@ -34,12 +34,12 @@ async function fetchWithRetry(
   }
 }
 
-function triggerNasSync() {
+async function triggerNasSync(): Promise<void> {
   const webhookUrl = process.env.NAS_WEBHOOK_URL;
   const webhookSecret = process.env.NAS_WEBHOOK_SECRET;
   if (!webhookUrl || !webhookSecret) return;
 
-  fetchWithRetry(
+  await fetchWithRetry(
     webhookUrl,
     {
       method: "POST",
@@ -52,18 +52,19 @@ function triggerNasSync() {
   );
 }
 
-function triggerNasIaUpload(data: {
+async function triggerNasIaUpload(data: {
   userFolder: string;
   titleFolder: string;
   iaIdentifier: string;
-}) {
+}): Promise<void> {
   const webhookUrl = process.env.NAS_WEBHOOK_URL;
   const webhookSecret = process.env.NAS_WEBHOOK_SECRET;
   if (!webhookUrl || !webhookSecret) return;
 
   const iaWebhookUrl = webhookUrl.replace("/sync", "/ia-upload");
+  console.log(`triggerNasIaUpload: calling ${iaWebhookUrl} with`, JSON.stringify(data));
 
-  fetchWithRetry(
+  await fetchWithRetry(
     iaWebhookUrl,
     {
       method: "POST",
@@ -171,13 +172,18 @@ export async function POST(request: NextRequest) {
       console.error("Failed to insert item into DB:", dbErr);
     }
 
-    // Trigger NAS rclone sync (fire-and-forget)
-    triggerNasSync();
+    // Trigger NAS webhooks (await to ensure they execute before Vercel kills the runtime)
+    const webhookPromises: Promise<void>[] = [triggerNasSync()];
 
-    // If uploading to IA, trigger NAS IA upload webhook (fire-and-forget)
     if (uploadToIA && iaIdentifier) {
-      triggerNasIaUpload({ userFolder, titleFolder, iaIdentifier: iaIdentifier! });
+      console.log(`Finalize: triggering IA upload for ${iaIdentifier}`);
+      webhookPromises.push(
+        triggerNasIaUpload({ userFolder, titleFolder, iaIdentifier: iaIdentifier! })
+      );
     }
+
+    // Wait for all webhooks to at least start (first attempt)
+    await Promise.allSettled(webhookPromises);
 
     return NextResponse.json({
       success: true,
