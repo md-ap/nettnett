@@ -57,6 +57,46 @@ if [ "$METHOD" = "POST" ] && [ "$PATH_REQ" = "/sync" ]; then
   exit 0
 fi
 
+# ── POST /delete-item — Delete specific item folder from NAS ──
+if [ "$METHOD" = "POST" ] && [ "$PATH_REQ" = "/delete-item" ]; then
+  # Parse JSON body before background process
+  USER_FOLDER=$(echo "$BODY" | jq -r '.userFolder // empty')
+  TITLE_FOLDER=$(echo "$BODY" | jq -r '.titleFolder // empty')
+
+  RESPONSE='{"status":"delete started"}'
+  printf "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" ${#RESPONSE} "$RESPONSE"
+
+  # Validate before fork
+  if [ -z "$USER_FOLDER" ] || [ -z "$TITLE_FOLDER" ]; then
+    echo "[$(date)] ERROR: delete-item missing required fields. Body was: $BODY" >> /config/delete.log
+    exit 0
+  fi
+
+  # Safety: block path traversal
+  case "$USER_FOLDER$TITLE_FOLDER" in
+    *..* )
+      echo "[$(date)] ERROR: path traversal attempt blocked: ${USER_FOLDER}/${TITLE_FOLDER}" >> /config/delete.log
+      exit 0
+      ;;
+  esac
+
+  ITEM_PATH="/data/${USER_FOLDER}/${TITLE_FOLDER}"
+
+  # Delete folder in background
+  (
+    echo "[$(date)] Delete triggered for ${USER_FOLDER}/${TITLE_FOLDER}"
+    if [ -d "$ITEM_PATH" ]; then
+      rm -rf "$ITEM_PATH"
+      echo "[$(date)] Deleted: ${ITEM_PATH}"
+    else
+      echo "[$(date)] Path not found (already deleted?): ${ITEM_PATH}"
+    fi
+    echo "[$(date)] Delete completed"
+  ) >> /config/delete.log 2>&1 &
+
+  exit 0
+fi
+
 # ── POST /ia-upload — Upload files to Internet Archive ──
 if [ "$METHOD" = "POST" ] && [ "$PATH_REQ" = "/ia-upload" ]; then
   # Parse JSON body BEFORE background process (socat loses $BODY in subshell via Cloudflare Tunnel)

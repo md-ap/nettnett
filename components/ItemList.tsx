@@ -22,6 +22,7 @@ interface UploadItem {
 }
 
 const B2_PUBLIC_URL = "https://f004.backblazeb2.com/file/nettnett1";
+const ITEMS_PER_PAGE = 10;
 
 const MEDIA_TYPES = [
   { value: "texts", label: "Texts (Books, Documents, PDFs)" },
@@ -70,6 +71,23 @@ function formatDate(dateString: string | Date): string {
   });
 }
 
+/* ── Chevron Icon ── */
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      className={`h-4 w-4 shrink-0 text-white/40 transition-transform duration-200 ${
+        expanded ? "rotate-90" : ""
+      }`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      <path d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
 /* ── Edit Modal ── */
 function EditModal({
   item,
@@ -98,6 +116,8 @@ function EditModal({
   const [language, setLanguage] = useState((meta.language as string) || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [sendingToIA, setSendingToIA] = useState(false);
+  const [iaSuccess, setIaSuccess] = useState(false);
 
   // Close on Escape
   useEffect(() => {
@@ -148,6 +168,41 @@ function EditModal({
     }
   }
 
+  async function handleSendToIA() {
+    if (
+      !confirm(
+        "This will publish all files to the Internet Archive. Continue?"
+      )
+    )
+      return;
+
+    setSendingToIA(true);
+    setError("");
+
+    try {
+      const res = await fetch("/api/files/send-to-ia", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder: item.folder }),
+      });
+
+      if (res.ok) {
+        setIaSuccess(true);
+        setTimeout(() => {
+          onSaved();
+          onClose();
+        }, 2500);
+      } else {
+        const data = await res.json();
+        setError(data.error || "Failed to send to Internet Archive");
+      }
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setSendingToIA(false);
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
@@ -162,17 +217,24 @@ function EditModal({
             onClick={onClose}
             className="rounded p-1 text-white/40 transition-colors hover:bg-white/10 hover:text-white"
           >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <svg
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
               <path d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
 
-        {/* IA Warning */}
+        {/* IA Warning for already published items */}
         {item.iaUrl && (
           <div className="mb-4 rounded border border-yellow-500/20 bg-yellow-500/5 px-4 py-3">
             <p className="text-sm text-yellow-400">
-              Published to Internet Archive — metadata changes won&apos;t sync to IA
+              Published to Internet Archive — metadata changes won&apos;t sync
+              to IA
             </p>
             <p className="mt-1 text-xs text-yellow-400/60">
               To update on Internet Archive, delete this item and re-upload
@@ -189,7 +251,9 @@ function EditModal({
         <form onSubmit={handleSave} className="space-y-4">
           {/* Title */}
           <div>
-            <label className="mb-1 block text-sm text-white/60">Title *</label>
+            <label className="mb-1 block text-sm text-white/60">
+              Title *
+            </label>
             <input
               type="text"
               value={title}
@@ -226,7 +290,11 @@ function EditModal({
                 className="w-full rounded border border-white/20 bg-white/5 px-4 py-2.5 text-sm text-white outline-none focus:border-white/50 disabled:opacity-50"
               >
                 {MEDIA_TYPES.map((mt) => (
-                  <option key={mt.value} value={mt.value} className="bg-black">
+                  <option
+                    key={mt.value}
+                    value={mt.value}
+                    className="bg-black"
+                  >
                     {mt.label}
                   </option>
                 ))}
@@ -317,8 +385,8 @@ function EditModal({
             </div>
           </div>
 
-          {/* IA status (read-only) */}
-          {item.iaUrl && (
+          {/* IA status / Send to IA */}
+          {item.iaUrl ? (
             <div className="flex items-center gap-3 rounded border border-white/10 bg-white/[0.02] px-4 py-3">
               <input
                 type="checkbox"
@@ -337,6 +405,36 @@ function EditModal({
                   Internet Archive
                 </a>
               </span>
+            </div>
+          ) : iaSuccess ? (
+            <div className="rounded border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
+              <p className="text-sm text-emerald-400">
+                Sent to Internet Archive! Upload is processing on the server.
+              </p>
+              <p className="mt-1 text-xs text-emerald-400/60">
+                It may take a few minutes for the item to appear on archive.org.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded border border-white/10 bg-white/[0.02] px-4 py-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white/60">
+                    Not on Internet Archive
+                  </p>
+                  <p className="mt-0.5 text-xs text-white/30">
+                    Publish all files for permanent archival
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSendToIA}
+                  disabled={sendingToIA || saving}
+                  className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-30"
+                >
+                  {sendingToIA ? "Sending..." : "Send to Internet Archive"}
+                </button>
+              </div>
             </div>
           )}
 
@@ -368,7 +466,29 @@ function EditModal({
 export default function ItemList({ items }: { items: UploadItem[] }) {
   const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<UploadItem | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    new Set()
+  );
+  const [currentPage, setCurrentPage] = useState(1);
   const router = useRouter();
+
+  const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+  const paginatedItems = items.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
+
+  function toggleExpanded(folder: string) {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(folder)) {
+        next.delete(folder);
+      } else {
+        next.add(folder);
+      }
+      return next;
+    });
+  }
 
   async function handleDelete(item: UploadItem) {
     const msg = item.iaIdentifier
@@ -412,109 +532,193 @@ export default function ItemList({ items }: { items: UploadItem[] }) {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Your Uploads ({items.length})</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">
+          Your Uploads ({items.length})
+        </h2>
+        {totalPages > 1 && (
+          <span className="text-xs text-white/40">
+            Page {currentPage} of {totalPages}
+          </span>
+        )}
+      </div>
 
-      {items.map((item) => (
-        <div
-          key={item.folder}
-          className="rounded-lg border border-white/10 overflow-hidden"
-        >
-          {/* Item Header */}
-          <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <h3 className="font-medium truncate">{item.title}</h3>
-              {item.iaUrl ? (
-                <a
-                  href={item.iaUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-500/25"
-                >
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  Internet Archive
-                </a>
-              ) : (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/5 px-2.5 py-0.5 text-xs text-white/40">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-white/30" />
-                  Cloud only
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs text-white/40">
-                {formatDate(item.createdAt)}
-              </span>
-              <button
-                onClick={() => setEditingItem(item)}
-                className="rounded px-3 py-1 text-sm text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+      <div className="space-y-2">
+        {paginatedItems.map((item, index) => {
+          const isExpanded = expandedFolders.has(item.folder);
+          const isEven = index % 2 === 0;
+
+          return (
+            <div
+              key={item.folder}
+              className={`rounded-lg border border-white/10 overflow-hidden ${
+                isEven ? "bg-white/[0.03]" : "bg-white/[0.06]"
+              }`}
+            >
+              {/* Item Header — clickable to expand */}
+              <div
+                className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none hover:bg-white/[0.04] transition-colors"
+                onClick={() => toggleExpanded(item.folder)}
               >
-                Edit
-              </button>
-              <button
-                onClick={() => handleDelete(item)}
-                disabled={deletingFolder === item.folder}
-                className="rounded px-3 py-1 text-sm text-red-400 transition-colors hover:bg-red-400/10 disabled:opacity-50"
-              >
-                {deletingFolder === item.folder ? "Deleting..." : "Delete"}
-              </button>
-            </div>
-          </div>
+                <ChevronIcon expanded={isExpanded} />
 
-          {/* Item metadata row */}
-          {((item.metadata?.creator as string) || (item.metadata?.mediatype as string)) && (
-            <div className="flex items-center gap-4 border-b border-white/5 px-5 py-2 text-xs text-white/40">
-              {(item.metadata?.creator as string) && (
-                <span>
-                  <span className="text-white/25">Creator:</span>{" "}
-                  {item.metadata.creator as string}
-                </span>
-              )}
-              {(item.metadata?.mediatype as string) && (
-                <span>
-                  <span className="text-white/25">Type:</span>{" "}
-                  {MEDIA_TYPES.find(
-                    (mt) => mt.value === (item.metadata.mediatype as string)
-                  )?.label || (item.metadata.mediatype as string)}
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Column headers */}
-          <div className="flex items-center px-5 py-1.5 text-[10px] uppercase tracking-wider text-white/25 border-b border-white/5">
-            <span className="flex-1">File</span>
-            <span className="w-20 text-right">Size</span>
-            <span className="w-16" />
-          </div>
-
-          {/* Files */}
-          <ul className="divide-y divide-white/5">
-            {item.files.map((file) => (
-              <li
-                key={file.key}
-                className="flex items-center px-5 py-2.5"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm">{file.name}</p>
+                <div className="flex-1 min-w-0 flex items-center gap-3">
+                  <h3 className="font-medium truncate">{item.title}</h3>
+                  {item.iaUrl ? (
+                    <a
+                      href={item.iaUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-500/25"
+                    >
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      Internet Archive
+                    </a>
+                  ) : (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/5 px-2.5 py-0.5 text-xs text-white/40">
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-white/30" />
+                      Cloud only
+                    </span>
+                  )}
                 </div>
-                <span className="w-20 text-right text-xs text-white/40">
-                  {formatFileSize(file.size)}
+
+                {/* File count + metadata summary (visible when collapsed) */}
+                <span className="shrink-0 text-xs text-white/30">
+                  {item.files.length} file{item.files.length !== 1 ? "s" : ""}
                 </span>
-                <span className="w-16 text-right">
-                  <a
-                    href={`${B2_PUBLIC_URL}/${file.key}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded px-3 py-1 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+
+                <span className="shrink-0 text-xs text-white/30 hidden sm:inline">
+                  {formatDate(item.createdAt)}
+                </span>
+
+                {/* Actions */}
+                <div
+                  className="flex items-center gap-1 shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => setEditingItem(item)}
+                    className="rounded px-2.5 py-1 text-sm text-white/60 transition-colors hover:bg-white/10 hover:text-white"
                   >
-                    Ver
-                  </a>
-                </span>
-              </li>
-            ))}
-          </ul>
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(item)}
+                    disabled={deletingFolder === item.folder}
+                    className="rounded px-2.5 py-1 text-sm text-red-400 transition-colors hover:bg-red-400/10 disabled:opacity-50"
+                  >
+                    {deletingFolder === item.folder ? "..." : "Delete"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Expanded: metadata + files */}
+              {isExpanded && (
+                <div className="border-t border-white/5">
+                  {/* Metadata row */}
+                  {((item.metadata?.creator as string) ||
+                    (item.metadata?.mediatype as string)) && (
+                    <div className="flex items-center gap-4 border-b border-white/5 px-5 py-2 text-xs text-white/40">
+                      {(item.metadata?.creator as string) && (
+                        <span>
+                          <span className="text-white/25">Creator:</span>{" "}
+                          {item.metadata.creator as string}
+                        </span>
+                      )}
+                      {(item.metadata?.mediatype as string) && (
+                        <span>
+                          <span className="text-white/25">Type:</span>{" "}
+                          {MEDIA_TYPES.find(
+                            (mt) =>
+                              mt.value ===
+                              (item.metadata.mediatype as string)
+                          )?.label || (item.metadata.mediatype as string)}
+                        </span>
+                      )}
+                      <span className="sm:hidden">
+                        <span className="text-white/25">Date:</span>{" "}
+                        {formatDate(item.createdAt)}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Column headers */}
+                  <div className="flex items-center px-5 py-1.5 text-[10px] uppercase tracking-wider text-white/25 border-b border-white/5">
+                    <span className="flex-1">File</span>
+                    <span className="w-20 text-right">Size</span>
+                    <span className="w-16" />
+                  </div>
+
+                  {/* Files */}
+                  <ul className="divide-y divide-white/5">
+                    {item.files.map((file) => (
+                      <li
+                        key={file.key}
+                        className="flex items-center px-5 py-2.5"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm">{file.name}</p>
+                        </div>
+                        <span className="w-20 text-right text-xs text-white/40">
+                          {formatFileSize(file.size)}
+                        </span>
+                        <span className="w-16 text-right">
+                          <a
+                            href={`${B2_PUBLIC_URL}/${file.key}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rounded px-3 py-1 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+                          >
+                            Ver
+                          </a>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 pt-2">
+          <button
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className="rounded border border-white/20 px-4 py-2 text-sm text-white/70 transition-colors hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            Previous
+          </button>
+
+          {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+            <button
+              key={page}
+              onClick={() => setCurrentPage(page)}
+              className={`rounded px-3 py-2 text-sm transition-colors ${
+                page === currentPage
+                  ? "bg-white text-black font-semibold"
+                  : "text-white/60 hover:bg-white/10"
+              }`}
+            >
+              {page}
+            </button>
+          ))}
+
+          <button
+            onClick={() =>
+              setCurrentPage((p) => Math.min(totalPages, p + 1))
+            }
+            disabled={currentPage === totalPages}
+            className="rounded border border-white/20 px-4 py-2 text-sm text-white/70 transition-colors hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            Next
+          </button>
         </div>
-      ))}
+      )}
 
       {/* Edit Modal Overlay */}
       {editingItem && (
