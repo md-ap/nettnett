@@ -161,31 +161,34 @@ if [ "$METHOD" = "POST" ] && [ "$PATH_REQ" = "/ia-upload" ]; then
 
       if [ "$FIRST_FILE" = "1" ]; then
         # First file: include all metadata headers to create the IA item
-        CURL_HEADERS="-H 'x-archive-auto-make-bucket: 1'"
-        CURL_HEADERS="${CURL_HEADERS} -H 'x-archive-meta-mediatype: ${MEDIATYPE}'"
-        CURL_HEADERS="${CURL_HEADERS} -H 'x-archive-meta-collection: opensource'"
+        # Use a curl config file to avoid eval (which breaks on spaces in paths)
+        CURL_CONFIG=$(mktemp)
+
+        echo 'header = "x-archive-auto-make-bucket: 1"' >> "$CURL_CONFIG"
+        echo "header = \"x-archive-meta-mediatype: ${MEDIATYPE}\"" >> "$CURL_CONFIG"
+        echo 'header = "x-archive-meta-collection: opensource"' >> "$CURL_CONFIG"
 
         if [ -n "$TITLE" ]; then
           ENCODED_TITLE=$(echo "$TITLE" | jq -sRr '@uri')
-          CURL_HEADERS="${CURL_HEADERS} -H 'x-archive-meta-title: uri(${ENCODED_TITLE})'"
+          echo "header = \"x-archive-meta-title: uri(${ENCODED_TITLE})\"" >> "$CURL_CONFIG"
         fi
 
         if [ -n "$DESCRIPTION" ]; then
           ENCODED_DESC=$(echo "$DESCRIPTION" | jq -sRr '@uri')
-          CURL_HEADERS="${CURL_HEADERS} -H 'x-archive-meta-description: uri(${ENCODED_DESC})'"
+          echo "header = \"x-archive-meta-description: uri(${ENCODED_DESC})\"" >> "$CURL_CONFIG"
         fi
 
         if [ -n "$CREATOR" ]; then
           ENCODED_CREATOR=$(echo "$CREATOR" | jq -sRr '@uri')
-          CURL_HEADERS="${CURL_HEADERS} -H 'x-archive-meta-creator: uri(${ENCODED_CREATOR})'"
+          echo "header = \"x-archive-meta-creator: uri(${ENCODED_CREATOR})\"" >> "$CURL_CONFIG"
         fi
 
         if [ -n "$DATE_VAL" ]; then
-          CURL_HEADERS="${CURL_HEADERS} -H 'x-archive-meta-date: ${DATE_VAL}'"
+          echo "header = \"x-archive-meta-date: ${DATE_VAL}\"" >> "$CURL_CONFIG"
         fi
 
         if [ -n "$LANGUAGE" ]; then
-          CURL_HEADERS="${CURL_HEADERS} -H 'x-archive-meta-language: ${LANGUAGE}'"
+          echo "header = \"x-archive-meta-language: ${LANGUAGE}\"" >> "$CURL_CONFIG"
         fi
 
         # Add subject tags (numbered headers)
@@ -196,18 +199,19 @@ if [ "$METHOD" = "POST" ] && [ "$PATH_REQ" = "/ia-upload" ]; then
           if [ -n "$SUBJ" ]; then
             PADDED=$(printf "%02d" "$i")
             ENCODED_SUBJ=$(echo "$SUBJ" | jq -sRr '@uri')
-            CURL_HEADERS="${CURL_HEADERS} -H 'x-archive-meta${PADDED}-subject: uri(${ENCODED_SUBJ})'"
+            echo "header = \"x-archive-meta${PADDED}-subject: uri(${ENCODED_SUBJ})\"" >> "$CURL_CONFIG"
           fi
           i=$((i + 1))
         done
 
-        eval curl -L --location-trusted -X PUT \
-          -H "'Authorization: LOW ${IA_S3_ACCESS_KEY}:${IA_S3_SECRET_KEY}'" \
-          -H "'Content-Type: application/octet-stream'" \
-          ${CURL_HEADERS} \
+        curl -L --location-trusted -X PUT \
+          -H "Authorization: LOW ${IA_S3_ACCESS_KEY}:${IA_S3_SECRET_KEY}" \
+          -H "Content-Type: application/octet-stream" \
+          -K "$CURL_CONFIG" \
           --data-binary "@${FILE_PATH}" \
-          "'${IA_URL}'" 2>&1
+          "${IA_URL}" 2>&1
 
+        rm -f "$CURL_CONFIG"
         FIRST_FILE=0
       else
         # Subsequent files: only auth and content-type
