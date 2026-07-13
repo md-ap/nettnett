@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSession, getDbRole, canManageRadio } from "@/lib/auth";
+import { getSession, getDbRole } from "@/lib/auth";
 import Navbar from "@/components/Navbar";
 
 export default async function AdminLayout({
@@ -20,9 +20,14 @@ export default async function AdminLayout({
   return (
     <div className="min-h-screen">
       <Navbar
-        userName={`${session.firstName} ${session.lastName}`}
-        isAdmin={role === "admin"}
-        canManage={canManageRadio(role)}
+        initialSession={{
+          authenticated: true,
+          user: {
+            firstName: session.firstName,
+            lastName: session.lastName,
+            role,
+          },
+        }}
       />
       <main className="mx-auto max-w-7xl px-4 py-8">
         {children}

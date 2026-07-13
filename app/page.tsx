@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import RadioPlayer from "@/components/RadioPlayer";
-import PublicNavbar from "@/components/PublicNavbar";
+import Navbar from "@/components/Navbar";
 import { useRadio } from "@/components/RadioProvider";
 
 export default function HomePage() {
@@ -10,7 +10,7 @@ export default function HomePage() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <PublicNavbar />
+      <Navbar />
 
       {/* Main content */}
       <div className="flex flex-1 flex-col items-center px-4 pt-[12vh]">
