@@ -2,6 +2,10 @@
 
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import Turnstile from "./Turnstile";
+
+const TURNSTILE_ENABLED = !!process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
 export default function AuthForm() {
   const [isLogin, setIsLogin] = useState(true);
@@ -9,6 +13,7 @@ export default function AuthForm() {
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -22,7 +27,7 @@ export default function AuthForm() {
       const endpoint = isLogin ? "/api/auth/login" : "/api/auth/register";
       const body = isLogin
         ? { email, password }
-        : { email, password, firstName, lastName };
+        : { email, password, firstName, lastName, turnstileToken };
 
       const res = await fetch(endpoint, {
         method: "POST",
@@ -95,14 +100,23 @@ export default function AuthForm() {
           minLength={6}
           className="w-full rounded border border-white/20 bg-white/5 px-4 py-3 text-white placeholder-white/40 outline-none focus:border-white/50"
         />
+        {!isLogin && <Turnstile onToken={setTurnstileToken} />}
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || (!isLogin && TURNSTILE_ENABLED && !turnstileToken)}
           className="w-full rounded bg-white py-3 font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {loading ? "Loading..." : isLogin ? "Sign In" : "Register"}
         </button>
       </form>
+
+      {isLogin && (
+        <p className="mt-3 text-center text-sm">
+          <Link href="/forgot-password" className="text-white/50 hover:text-white/80 transition-colors">
+            Forgot your password?
+          </Link>
+        </p>
+      )}
 
       <p className="mt-6 text-center text-sm text-white/60">
         {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}

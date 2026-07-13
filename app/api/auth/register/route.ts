@@ -3,14 +3,24 @@ import bcrypt from "bcryptjs";
 import pool from "@/lib/db";
 import { signToken, createSessionCookie } from "@/lib/auth";
 import { createUserFolder } from "@/lib/b2";
+import { sendWelcomeEmail } from "@/lib/email";
+import { verifyTurnstile } from "@/lib/turnstile";
 
 export async function POST(request: NextRequest) {
   try {
-    const { email, firstName, lastName, password } = await request.json();
+    const { email, firstName, lastName, password, turnstileToken } = await request.json();
 
     if (!email || !firstName || !lastName || !password) {
       return NextResponse.json(
         { error: "All fields are required" },
+        { status: 400 }
+      );
+    }
+
+    const turnstileOk = await verifyTurnstile(turnstileToken);
+    if (!turnstileOk) {
+      return NextResponse.json(
+        { error: "Verification failed — please try again" },
         { status: 400 }
       );
     }
@@ -47,6 +57,12 @@ export async function POST(request: NextRequest) {
 
     // Create user folder in Backblaze B2
     await createUserFolder(firstName, lastName);
+
+    // Welcome email — fire and forget, never blocks the registration
+    const appUrl = new URL(request.url).origin;
+    sendWelcomeEmail(user.email, user.first_name, appUrl).catch((e) =>
+      console.error("Welcome email failed:", e)
+    );
 
     const token = signToken({
       userId: user.id,

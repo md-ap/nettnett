@@ -76,6 +76,31 @@ export async function migrateCreateManagementSessions() {
   }
 }
 
+export async function migrateCreatePasswordResetTokens() {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.password_reset_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+        token_hash VARCHAR(64) NOT NULL,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        used BOOLEAN DEFAULT false,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_reset_tokens_hash
+      ON public.password_reset_tokens(token_hash);
+    `);
+
+    console.log("✓ password_reset_tokens table migration complete");
+  } finally {
+    client.release();
+  }
+}
+
 export async function initializeDatabase() {
   const client = await pool.connect();
   try {

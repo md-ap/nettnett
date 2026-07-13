@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { initializeDatabase, migrateAddRoleColumn, migrateAddCanManageColumn, migrateCreateManagementSessions } from "@/lib/db-init";
+import { initializeDatabase, migrateAddRoleColumn, migrateAddCanManageColumn, migrateCreateManagementSessions, migrateCreatePasswordResetTokens } from "@/lib/db-init";
 
 export async function GET() {
   try {
@@ -7,6 +7,7 @@ export async function GET() {
     await migrateAddRoleColumn();
     await migrateAddCanManageColumn();
     await migrateCreateManagementSessions();
+    await migrateCreatePasswordResetTokens();
     return NextResponse.json({ message: "Database initialized and migrated successfully" });
   } catch (error) {
     console.error("Database initialization error:", error);
