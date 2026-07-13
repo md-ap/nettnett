@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { detectRemoteAudioDuration } from "@/lib/audio-duration";
 
 const AZURACAST_URL = process.env.NEXT_PUBLIC_AZURACAST_URL || "";
 const AZURACAST_API_KEY = process.env.AZURACAST_API_KEY || "";
@@ -25,6 +26,19 @@ export async function GET(request: NextRequest) {
     schedule: `/api/station/${STATION_ID}/schedule`,
     streamers: `/api/station/${STATION_ID}/streamers`,
   };
+
+  // Aggregated view of all URL broadcast playlists (instant + scheduled)
+  if (endpoint === "url-broadcasts") {
+    try {
+      return await handleListUrlBroadcasts();
+    } catch (e) {
+      console.error("url-broadcasts list error:", e);
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "Failed to list URL broadcasts" },
+        { status: 502 }
+      );
+    }
+  }
 
   // Dynamic endpoints with IDs
   const playlistMatch = endpoint.match(/^playlist\/(\d+)$/);
@@ -75,6 +89,68 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { action, playlistId, mediaId, mediaPath } = body;
+
+    // URL Broadcast: orchestrated multi-step actions (validated flow):
+    // remote_url playlists do NOT enter the AutoDJ rotation queue — they only
+    // play via schedule. Start = schedule NOW + interrupt + reload.
+    // Stop = unschedule alone is NOT enough (the remote stream holds the air);
+    // the playlist must also be disabled, then reload.
+    if (action === "broadcast-url") {
+      try {
+        return await handleBroadcastUrl(body);
+      } catch (e) {
+        console.error("broadcast-url error:", e);
+        return NextResponse.json(
+          { error: e instanceof Error ? e.message : "Failed to start URL broadcast" },
+          { status: 502 }
+        );
+      }
+    }
+    if (action === "stop-broadcast-url") {
+      try {
+        return await handleStopBroadcastUrl();
+      } catch (e) {
+        console.error("stop-broadcast-url error:", e);
+        return NextResponse.json(
+          { error: e instanceof Error ? e.message : "Failed to stop URL broadcast" },
+          { status: 502 }
+        );
+      }
+    }
+    if (action === "detect-url-duration") {
+      try {
+        const detected = await detectRemoteAudioDuration(String(body.url || ""));
+        return NextResponse.json({
+          seconds: detected?.seconds ?? null,
+          source: detected?.source ?? null,
+        });
+      } catch (e) {
+        console.error("detect-url-duration error:", e);
+        return NextResponse.json({ seconds: null, source: null });
+      }
+    }
+    if (action === "schedule-url-broadcast") {
+      try {
+        return await handleScheduleUrlBroadcast(body);
+      } catch (e) {
+        console.error("schedule-url-broadcast error:", e);
+        return NextResponse.json(
+          { error: e instanceof Error ? e.message : "Failed to schedule URL broadcast" },
+          { status: 502 }
+        );
+      }
+    }
+    if (action === "delete-url-broadcast") {
+      try {
+        return await handleDeleteUrlBroadcast(Number(body.playlistId));
+      } catch (e) {
+        console.error("delete-url-broadcast error:", e);
+        return NextResponse.json(
+          { error: e instanceof Error ? e.message : "Failed to delete URL broadcast" },
+          { status: 502 }
+        );
+      }
+    }
 
     let apiPath: string;
     let method = "POST";
@@ -315,4 +391,338 @@ export async function POST(request: NextRequest) {
       { status: 502 }
     );
   }
+}
+
+// ============================================================
+// URL Broadcast — play a public MP3/stream URL on air
+// (replicates the legacy NettNett flow: paste an Internet Archive
+// URL and it takes over the Icecast broadcast)
+// ============================================================
+
+const BROADCAST_PLAYLIST_NAME = "URL Broadcast";
+// Scheduled URL broadcasts each get their own playlist: "URL: <title>"
+const SCHEDULED_URL_PREFIX = "URL: ";
+
+interface AzPlaylist {
+  id: number;
+  name: string;
+  is_enabled: boolean;
+  remote_url: string | null;
+}
+
+interface AzScheduleItem {
+  id?: number;
+  start_time: number;
+  end_time: number;
+  days: number[];
+  start_date?: string | null;
+  end_date?: string | null;
+  loop_once?: boolean;
+}
+
+interface AzPlaylistDetail extends AzPlaylist {
+  schedule_items?: AzScheduleItem[];
+}
+
+// Minimal authenticated fetch against AzuraCast that throws on error
+async function azuracast<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${AZURACAST_URL}${path}`, {
+    ...init,
+    headers: {
+      "X-API-Key": AZURACAST_API_KEY,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+    cache: "no-store",
+  });
+  if (res.status === 204) return null as T;
+  const data = await res.json().catch(() => null);
+  if (res.status >= 400) {
+    const msg =
+      (data && typeof data === "object" && "message" in data && (data as { message?: string }).message) ||
+      `AzuraCast error ${res.status}`;
+    throw new Error(String(msg));
+  }
+  return data as T;
+}
+
+// Current wall-clock in the station's timezone, as AzuraCast schedule values:
+// time integer (900 = 09:00, 2230 = 22:30) and ISO day (1=Mon..7=Sun)
+function scheduleParts(date: Date, timeZone: string): { timeInt: number; isoDay: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+    weekday: "short",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || "";
+  const dayMap: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+  return {
+    timeInt: (parseInt(get("hour")) % 24) * 100 + parseInt(get("minute")),
+    isoDay: dayMap[get("weekday")] || 1,
+  };
+}
+
+async function findBroadcastPlaylist(): Promise<AzPlaylist | undefined> {
+  const playlists = await azuracast<AzPlaylist[]>(`/api/station/${STATION_ID}/playlists`);
+  return playlists.find((p) => p.name === BROADCAST_PLAYLIST_NAME);
+}
+
+async function handleBroadcastUrl(body: { url?: string; durationMinutes?: number }) {
+  const url = (body.url || "").trim();
+  if (!/^https?:\/\/.+/i.test(url)) {
+    return NextResponse.json({ error: "A valid http(s) URL is required" }, { status: 400 });
+  }
+
+  // Duration: explicit value wins; otherwise auto-detect from the audio itself
+  // (exact via Internet Archive metadata, estimated via MP3 headers).
+  // Fallback: 1 hour. Always clamped to 5 min – 6 hours.
+  let detectedSource: string | null = null;
+  let duration: number;
+  if (body.durationMinutes && body.durationMinutes > 0) {
+    duration = body.durationMinutes;
+  } else {
+    const detected = await detectRemoteAudioDuration(url).catch(() => null);
+    if (detected) {
+      duration = Math.ceil(detected.seconds / 60);
+      detectedSource = detected.source;
+    } else {
+      duration = 60;
+    }
+  }
+  duration = Math.min(Math.max(duration, 5), 360);
+
+  // 1. Find or create the dedicated remote playlist
+  let playlist = await findBroadcastPlaylist();
+  if (!playlist) {
+    playlist = await azuracast<AzPlaylist>(`/api/station/${STATION_ID}/playlists`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: BROADCAST_PLAYLIST_NAME,
+        source: "remote_url",
+        remote_url: url,
+        remote_type: "stream",
+        type: "default",
+        order: "sequential",
+        is_enabled: true,
+      }),
+    });
+  }
+
+  // 2. Schedule window "now" in the STATION's timezone (not the server's)
+  const station = await azuracast<{ timezone?: string }>(`/api/station/${STATION_ID}`);
+  const tz = station?.timezone || "UTC";
+  const start = scheduleParts(new Date(Date.now() - 2 * 60 * 1000), tz);
+  const end = scheduleParts(new Date(Date.now() + duration * 60 * 1000), tz);
+
+  // 3. Point the playlist at the URL and schedule it with interrupt
+  await azuracast(`/api/station/${STATION_ID}/playlist/${playlist.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      remote_url: url,
+      schedule_items: [
+        { start_time: start.timeInt, end_time: end.timeInt, days: [start.isoDay] },
+      ],
+      backend_options: ["interrupt"],
+    }),
+  });
+
+  // 4. Ensure it's enabled (toggle is the reliable enable/disable endpoint)
+  const detail = await azuracast<AzPlaylist>(`/api/station/${STATION_ID}/playlist/${playlist.id}`);
+  if (!detail.is_enabled) {
+    await azuracast(`/api/station/${STATION_ID}/playlist/${playlist.id}/toggle`, { method: "PUT" });
+  }
+
+  // 5. Reload so Liquidsoap picks up the new schedule (takes ~30s to switch)
+  await azuracast(`/api/station/${STATION_ID}/reload`, { method: "POST" });
+
+  return NextResponse.json({
+    success: true,
+    playlistId: playlist.id,
+    durationMinutes: duration,
+    detectedSource,
+  });
+}
+
+// Create a one-off scheduled URL broadcast: its own playlist ("URL: <title>")
+// with a date-bound schedule item, so multiple broadcasts with different URLs
+// can coexist on the calendar without overwriting each other.
+async function handleScheduleUrlBroadcast(body: {
+  title?: string;
+  url?: string;
+  date?: string; // YYYY-MM-DD (station timezone)
+  startTime?: string; // HH:MM (station timezone)
+  durationMinutes?: number;
+}) {
+  const title = (body.title || "").trim();
+  const url = (body.url || "").trim();
+  const date = (body.date || "").trim();
+  const startTime = (body.startTime || "").trim();
+
+  if (!title || title.length > 80) {
+    return NextResponse.json({ error: "A title (max 80 chars) is required" }, { status: 400 });
+  }
+  if (!/^https?:\/\/.+/i.test(url)) {
+    return NextResponse.json({ error: "A valid http(s) URL is required" }, { status: 400 });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return NextResponse.json({ error: "A valid date (YYYY-MM-DD) is required" }, { status: 400 });
+  }
+  if (!/^\d{2}:\d{2}$/.test(startTime)) {
+    return NextResponse.json({ error: "A valid start time (HH:MM) is required" }, { status: 400 });
+  }
+
+  // Duration: explicit or auto-detected; for scheduled shows we require one
+  let detectedSource: string | null = null;
+  let duration: number;
+  if (body.durationMinutes && body.durationMinutes > 0) {
+    duration = body.durationMinutes;
+  } else {
+    const detected = await detectRemoteAudioDuration(url).catch(() => null);
+    if (!detected) {
+      return NextResponse.json(
+        { error: "Could not detect the audio duration — please choose one manually" },
+        { status: 400 }
+      );
+    }
+    duration = Math.ceil(detected.seconds / 60);
+    detectedSource = detected.source;
+  }
+  duration = Math.min(Math.max(duration, 5), 360);
+
+  // No duplicate titles
+  const name = `${SCHEDULED_URL_PREFIX}${title}`;
+  const playlists = await azuracast<AzPlaylist[]>(`/api/station/${STATION_ID}/playlists`);
+  if (playlists.some((p) => p.name === name)) {
+    return NextResponse.json(
+      { error: "A scheduled URL broadcast with that title already exists" },
+      { status: 400 }
+    );
+  }
+
+  // Schedule window (station-timezone wall clock, date-bound one-off)
+  const [y, mo, d] = date.split("-").map(Number);
+  const [hh, mm] = startTime.split(":").map(Number);
+  if (hh > 23 || mm > 59) {
+    return NextResponse.json({ error: "Invalid start time" }, { status: 400 });
+  }
+  const jsDay = new Date(Date.UTC(y, mo - 1, d)).getUTCDay(); // 0=Sun..6=Sat
+  const isoDay = jsDay === 0 ? 7 : jsDay; // 1=Mon..7=Sun
+
+  const startMinutes = hh * 60 + mm;
+  const endMinutes = startMinutes + duration;
+  let endDate = date;
+  if (endMinutes >= 1440) {
+    // Crosses midnight → end date is the next calendar day
+    const next = new Date(Date.UTC(y, mo - 1, d) + 86400000);
+    endDate = next.toISOString().slice(0, 10);
+  }
+  const toTimeInt = (mins: number) => Math.floor((mins % 1440) / 60) * 100 + ((mins % 1440) % 60);
+
+  // Create the dedicated playlist + schedule + interrupt, then reload
+  const playlist = await azuracast<AzPlaylist>(`/api/station/${STATION_ID}/playlists`, {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      source: "remote_url",
+      remote_url: url,
+      remote_type: "stream",
+      type: "default",
+      order: "sequential",
+      is_enabled: true,
+    }),
+  });
+
+  await azuracast(`/api/station/${STATION_ID}/playlist/${playlist.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      schedule_items: [
+        {
+          start_time: toTimeInt(startMinutes),
+          end_time: toTimeInt(endMinutes),
+          days: [isoDay],
+          start_date: date,
+          end_date: endDate,
+        },
+      ],
+      backend_options: ["interrupt"],
+    }),
+  });
+
+  await azuracast(`/api/station/${STATION_ID}/reload`, { method: "POST" });
+
+  return NextResponse.json({
+    success: true,
+    playlistId: playlist.id,
+    name,
+    durationMinutes: duration,
+    detectedSource,
+  });
+}
+
+async function handleDeleteUrlBroadcast(playlistId: number) {
+  if (!playlistId || isNaN(playlistId)) {
+    return NextResponse.json({ error: "playlistId is required" }, { status: 400 });
+  }
+  // Only allow deleting URL broadcast playlists through this action
+  const detail = await azuracast<AzPlaylistDetail>(
+    `/api/station/${STATION_ID}/playlist/${playlistId}`
+  );
+  const isUrlBroadcast =
+    detail.name === BROADCAST_PLAYLIST_NAME || detail.name.startsWith(SCHEDULED_URL_PREFIX);
+  if (!isUrlBroadcast) {
+    return NextResponse.json(
+      { error: "Not a URL broadcast playlist" },
+      { status: 400 }
+    );
+  }
+  await azuracast(`/api/station/${STATION_ID}/playlist/${playlistId}`, { method: "DELETE" });
+  await azuracast(`/api/station/${STATION_ID}/reload`, { method: "POST" });
+  return NextResponse.json({ success: true });
+}
+
+async function handleListUrlBroadcasts() {
+  const playlists = await azuracast<AzPlaylist[]>(`/api/station/${STATION_ID}/playlists`);
+  const urlPlaylists = playlists.filter(
+    (p) => p.name === BROADCAST_PLAYLIST_NAME || p.name.startsWith(SCHEDULED_URL_PREFIX)
+  );
+  const detailed = await Promise.all(
+    urlPlaylists.map((p) =>
+      azuracast<AzPlaylistDetail>(`/api/station/${STATION_ID}/playlist/${p.id}`)
+    )
+  );
+  return NextResponse.json(
+    detailed.map((d) => ({
+      id: d.id,
+      name: d.name,
+      title: d.name.startsWith(SCHEDULED_URL_PREFIX)
+        ? d.name.slice(SCHEDULED_URL_PREFIX.length)
+        : d.name,
+      is_instant: d.name === BROADCAST_PLAYLIST_NAME,
+      is_enabled: d.is_enabled,
+      remote_url: d.remote_url,
+      schedule_items: d.schedule_items || [],
+    }))
+  );
+}
+
+async function handleStopBroadcastUrl() {
+  const playlist = await findBroadcastPlaylist();
+  if (!playlist) {
+    return NextResponse.json({ success: true, message: "No URL broadcast playlist exists" });
+  }
+
+  // Unschedule AND disable — the remote stream won't release the air otherwise
+  await azuracast(`/api/station/${STATION_ID}/playlist/${playlist.id}`, {
+    method: "PUT",
+    body: JSON.stringify({ schedule_items: [] }),
+  });
+  if (playlist.is_enabled) {
+    await azuracast(`/api/station/${STATION_ID}/playlist/${playlist.id}/toggle`, { method: "PUT" });
+  }
+  await azuracast(`/api/station/${STATION_ID}/reload`, { method: "POST" });
+
+  return NextResponse.json({ success: true });
 }

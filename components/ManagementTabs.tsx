@@ -5,11 +5,13 @@ import NowPlayingControl from "./NowPlayingControl";
 import PlaylistManager from "./PlaylistManager";
 import ScheduleCalendar from "./ScheduleCalendar";
 import StreamerManager from "./StreamerManager";
+import UrlBroadcast from "./UrlBroadcast";
 
-type Tab = "stream" | "playlists" | "calendar" | "streamers";
+type Tab = "stream" | "broadcast" | "playlists" | "calendar" | "streamers";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "stream", label: "Stream" },
+  { id: "broadcast", label: "URL Broadcast" },
   { id: "playlists", label: "Playlists" },
   { id: "calendar", label: "Calendar" },
   { id: "streamers", label: "Streamers" },
@@ -39,6 +41,7 @@ export default function ManagementTabs() {
 
       {/* Tab content */}
       {activeTab === "stream" && <NowPlayingControl />}
+      {activeTab === "broadcast" && <UrlBroadcast />}
       {activeTab === "playlists" && <PlaylistManager />}
       {activeTab === "calendar" && <ScheduleCalendar />}
       {activeTab === "streamers" && <StreamerManager />}
