@@ -194,9 +194,12 @@ export default function UrlBroadcast() {
             ) : instantActive ? (
               <>
                 <p className="flex items-center gap-2 text-sm font-medium text-white">
-                  <span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                  <span className="inline-block h-2 w-2 rounded-full bg-green-500 animate-pulse" />
                   URL broadcast active
                 </p>
+                {instantActive.title && (
+                  <p className="mt-1 text-sm text-white/80">🎵 {instantActive.title}</p>
+                )}
                 {instantActive.remote_url && (
                   <p
                     className="mt-1 truncate text-xs text-white/50"
@@ -209,7 +212,7 @@ export default function UrlBroadcast() {
             ) : (
               <p className="text-sm text-white/60">Normal rotation (playlists)</p>
             )}
-            {nowPlaying && (
+            {!instantActive && nowPlaying && (
               <p className="mt-2 text-xs text-white/40">
                 Now playing: <span className="text-white/70">{nowPlaying}</span>
               </p>

@@ -81,9 +81,44 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      const res = await fetch(`${AZURACAST_URL}/api/nowplaying/nettnett`, {
-        cache: "no-store",
-      });
+      // Fetch AzuraCast now-playing + our URL-broadcast status in parallel.
+      // Remote URL broadcasts often carry no metadata (AzuraCast reports
+      // "Station Offline" while the audio streams), so the broadcast status
+      // overrides the display when active.
+      const [res, bcRes] = await Promise.all([
+        fetch(`${AZURACAST_URL}/api/nowplaying/nettnett`, { cache: "no-store" }),
+        fetch("/api/radio/broadcast-status", { cache: "no-store" }).catch(() => null),
+      ]);
+
+      let broadcast: { active: boolean; title: string | null } = {
+        active: false,
+        title: null,
+      };
+      if (bcRes?.ok) {
+        try {
+          broadcast = await bcRes.json();
+        } catch {
+          // keep default
+        }
+      }
+
+      if (broadcast.active) {
+        setTitle(broadcast.title || "URL Broadcast");
+        setArtist("");
+        setAlbum("");
+        setGenre("");
+        setNextTitle("");
+        setAlbumArt(null);
+        setIsLive(false);
+        setIsOnline(true);
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          setListeners(data?.listeners?.current || 0);
+        }
+        setLoading(false);
+        return;
+      }
+
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 

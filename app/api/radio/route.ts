@@ -465,9 +465,27 @@ function scheduleParts(date: Date, timeZone: string): { timeInt: number; isoDay:
   };
 }
 
+// The instant playlist embeds the human title in its name
+// ("URL Broadcast — My Show") so now-playing displays can show it —
+// remote streams often carry no metadata and would otherwise render
+// as "Station Offline" in AzuraCast's now playing.
 async function findBroadcastPlaylist(): Promise<AzPlaylist | undefined> {
   const playlists = await azuracast<AzPlaylist[]>(`/api/station/${STATION_ID}/playlists`);
-  return playlists.find((p) => p.name === BROADCAST_PLAYLIST_NAME);
+  return playlists.find((p) => p.name.startsWith(BROADCAST_PLAYLIST_NAME));
+}
+
+function extractInstantTitle(name: string): string {
+  const rest = name.slice(BROADCAST_PLAYLIST_NAME.length).replace(/^\s*—\s*/, "");
+  return rest || "URL Broadcast";
+}
+
+function deriveTitleFromUrl(url: string): string {
+  try {
+    const base = decodeURIComponent(new URL(url).pathname.split("/").pop() || "");
+    return base.replace(/\.[a-z0-9]{2,4}$/i, "") || "URL Broadcast";
+  } catch {
+    return "URL Broadcast";
+  }
 }
 
 async function handleBroadcastUrl(body: { url?: string; durationMinutes?: number }) {
@@ -476,23 +494,23 @@ async function handleBroadcastUrl(body: { url?: string; durationMinutes?: number
     return NextResponse.json({ error: "A valid http(s) URL is required" }, { status: 400 });
   }
 
-  // Duration: explicit value wins; otherwise auto-detect from the audio itself
-  // (exact via Internet Archive metadata, estimated via MP3 headers).
-  // Fallback: 1 hour. Always clamped to 5 min – 6 hours.
+  // Inspect the audio: duration (exact via Internet Archive metadata,
+  // estimated via MP3 headers) AND a human title for now-playing displays.
+  const detected = await detectRemoteAudioDuration(url).catch(() => null);
+
   let detectedSource: string | null = null;
   let duration: number;
   if (body.durationMinutes && body.durationMinutes > 0) {
     duration = body.durationMinutes;
+  } else if (detected) {
+    duration = Math.ceil(detected.seconds / 60);
+    detectedSource = detected.source;
   } else {
-    const detected = await detectRemoteAudioDuration(url).catch(() => null);
-    if (detected) {
-      duration = Math.ceil(detected.seconds / 60);
-      detectedSource = detected.source;
-    } else {
-      duration = 60;
-    }
+    duration = 60;
   }
   duration = Math.min(Math.max(duration, 5), 360);
+
+  const displayTitle = (detected?.title || deriveTitleFromUrl(url)).slice(0, 60);
 
   // 1. Recreate the dedicated remote playlist from scratch. IMPORTANT: a
   // stale remote playlist (even disabled) with no schedule gets baked into
@@ -506,7 +524,7 @@ async function handleBroadcastUrl(body: { url?: string; durationMinutes?: number
   const playlist = await azuracast<AzPlaylist>(`/api/station/${STATION_ID}/playlists`, {
     method: "POST",
     body: JSON.stringify({
-      name: BROADCAST_PLAYLIST_NAME,
+      name: `${BROADCAST_PLAYLIST_NAME} — ${displayTitle}`,
       source: "remote_url",
       remote_url: url,
       remote_type: "stream",
@@ -541,6 +559,7 @@ async function handleBroadcastUrl(body: { url?: string; durationMinutes?: number
     playlistId: playlist.id,
     durationMinutes: duration,
     detectedSource,
+    displayTitle,
   });
 }
 
@@ -669,7 +688,8 @@ async function handleDeleteUrlBroadcast(playlistId: number) {
     `/api/station/${STATION_ID}/playlist/${playlistId}`
   );
   const isUrlBroadcast =
-    detail.name === BROADCAST_PLAYLIST_NAME || detail.name.startsWith(SCHEDULED_URL_PREFIX);
+    detail.name.startsWith(BROADCAST_PLAYLIST_NAME) ||
+    detail.name.startsWith(SCHEDULED_URL_PREFIX);
   if (!isUrlBroadcast) {
     return NextResponse.json(
       { error: "Not a URL broadcast playlist" },
@@ -684,7 +704,8 @@ async function handleDeleteUrlBroadcast(playlistId: number) {
 async function handleListUrlBroadcasts() {
   const playlists = await azuracast<AzPlaylist[]>(`/api/station/${STATION_ID}/playlists`);
   const urlPlaylists = playlists.filter(
-    (p) => p.name === BROADCAST_PLAYLIST_NAME || p.name.startsWith(SCHEDULED_URL_PREFIX)
+    (p) =>
+      p.name.startsWith(BROADCAST_PLAYLIST_NAME) || p.name.startsWith(SCHEDULED_URL_PREFIX)
   );
   const detailed = await Promise.all(
     urlPlaylists.map((p) =>
@@ -692,17 +713,20 @@ async function handleListUrlBroadcasts() {
     )
   );
   return NextResponse.json(
-    detailed.map((d) => ({
-      id: d.id,
-      name: d.name,
-      title: d.name.startsWith(SCHEDULED_URL_PREFIX)
-        ? d.name.slice(SCHEDULED_URL_PREFIX.length)
-        : d.name,
-      is_instant: d.name === BROADCAST_PLAYLIST_NAME,
-      is_enabled: d.is_enabled,
-      remote_url: d.remote_url,
-      schedule_items: d.schedule_items || [],
-    }))
+    detailed.map((d) => {
+      const isInstant = d.name.startsWith(BROADCAST_PLAYLIST_NAME);
+      return {
+        id: d.id,
+        name: d.name,
+        title: isInstant
+          ? extractInstantTitle(d.name)
+          : d.name.slice(SCHEDULED_URL_PREFIX.length),
+        is_instant: isInstant,
+        is_enabled: d.is_enabled,
+        remote_url: d.remote_url,
+        schedule_items: d.schedule_items || [],
+      };
+    })
   );
 }
 

@@ -8,23 +8,27 @@
 export interface DetectedDuration {
   seconds: number;
   source: "internet-archive" | "mp3-estimate";
+  // Human title when available (IA file/item title) — used as now-playing text
+  title: string | null;
 }
 
 export async function detectRemoteAudioDuration(
   url: string
 ): Promise<DetectedDuration | null> {
   const ia = await tryInternetArchive(url).catch(() => null);
-  if (ia) return { seconds: ia, source: "internet-archive" };
+  if (ia) return { seconds: ia.seconds, source: "internet-archive", title: ia.title };
 
   const est = await tryMp3Estimate(url).catch(() => null);
-  if (est) return { seconds: est, source: "mp3-estimate" };
+  if (est) return { seconds: est, source: "mp3-estimate", title: null };
 
   return null;
 }
 
 // --- Internet Archive -------------------------------------------------
 
-async function tryInternetArchive(url: string): Promise<number | null> {
+async function tryInternetArchive(
+  url: string
+): Promise<{ seconds: number; title: string | null } | null> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -33,8 +37,12 @@ async function tryInternetArchive(url: string): Promise<number | null> {
   }
   if (!/(^|\.)archive\.org$/i.test(parsed.hostname)) return null;
 
-  // Expected: /download/{identifier}/{filename...}
-  const match = parsed.pathname.match(/^\/download\/([^/]+)\/(.+)$/);
+  // Accepts both URL shapes IA serves:
+  //   https://archive.org/download/{identifier}/{filename}
+  //   https://dn720601.ca.archive.org/0/items/{identifier}/{filename}
+  const match =
+    parsed.pathname.match(/^\/download\/([^/]+)\/(.+)$/) ||
+    parsed.pathname.match(/^\/\d+\/items\/([^/]+)\/(.+)$/);
   if (!match) return null;
   const identifier = match[1];
   const filename = decodeURIComponent(match[2]);
@@ -46,7 +54,9 @@ async function tryInternetArchive(url: string): Promise<number | null> {
   if (!res.ok) return null;
 
   const meta = await res.json();
-  const files: { name: string; length?: string }[] = Array.isArray(meta?.files)
+  const files: { name: string; length?: string; title?: string }[] = Array.isArray(
+    meta?.files
+  )
     ? meta.files
     : [];
   const file =
@@ -54,7 +64,16 @@ async function tryInternetArchive(url: string): Promise<number | null> {
     files.find((f) => decodeURIComponent(f.name) === filename);
   if (!file?.length) return null;
 
-  return parseIaLength(file.length);
+  const seconds = parseIaLength(file.length);
+  if (!seconds) return null;
+
+  // Prefer the file's own title, then the IA item's title
+  const title: string | null =
+    (typeof file.title === "string" && file.title.trim()) ||
+    (typeof meta?.metadata?.title === "string" && meta.metadata.title.trim()) ||
+    null;
+
+  return { seconds, title };
 }
 
 // IA "length" comes as seconds ("3723.45") or clock format ("1:02:03" / "62:03")

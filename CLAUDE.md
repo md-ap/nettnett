@@ -2,15 +2,18 @@
 
 ## Overview
 
-NettNett is a radio streaming platform and file management system built with Next.js. The public home page is a radio player streaming from AzuraCast (running on a UGREEN NAS via Cloudflare Tunnel). Admins can upload files to Backblaze B2 cloud storage and optionally to the Internet Archive. The app uses NileDB (Postgres-compatible) for user authentication and a dark-themed UI with Helvetica typography.
+NettNett is a radio streaming platform and file management system built with Next.js. The public home page is a radio player streaming from **AzuraCast running on a Hetzner Cloud VPS**. Members upload files to Backblaze B2 (and optionally the Internet Archive). Admins run the whole radio from the **Management panel**: playlists, weekly calendar, live DJ sessions from the browser (no external software), URL broadcasts of public MP3s, and cloud-stored session recordings. Auth uses NileDB (Postgres-compatible) with a dark-themed Helvetica UI.
 
 **Live deployment:** Vercel
-**Tech stack:** Next.js 16.1.6 | React 19 | TypeScript | Tailwind CSS v4 | PostgreSQL | Backblaze B2 | Internet Archive | AzuraCast
+**Tech stack:** Next.js 16.1.6 | React 19 | TypeScript | Tailwind CSS v4 | PostgreSQL | Backblaze B2 | Internet Archive | AzuraCast (Hetzner VPS)
 
 **Page structure:**
 - `/` — Public radio player (no login required)
+- `/about`, `/curators`, `/participate`, `/program` — Public pages (route group `(public)`)
 - `/login` — Auth page (login/register)
-- `/dashboard` — Admin panel (upload/manage files, requires login)
+- `/dashboard` — Member panel (upload/manage files, requires login)
+- `/management` — Radio management (requires `can_manage` or admin; exclusive-lock sessions)
+- `/admin` — User administration (admin role only)
 
 ---
 
@@ -20,83 +23,85 @@ NettNett is a radio streaming platform and file management system built with Nex
 User (Browser)
   │
   ├── Vercel (Next.js App)
-  │     ├── Auth (JWT + httpOnly cookies)
-  │     ├── API Routes (upload, delete, list)
-  │     └── Dashboard UI
+  │     ├── Auth (JWT + httpOnly cookies, roles: user/admin + can_manage)
+  │     ├── API Routes (upload, radio proxy, recordings, admin)
+  │     ├── Dashboard / Management / Admin UI
+  │     └── Native Live Studio (Webcast protocol over WebSocket)
   │
   ├── NileDB (Postgres-compatible)
-  │     └── users table (auth only)
+  │     └── users, items, management_sessions (public schema)
   │
   ├── Backblaze B2 (S3-compatible)
-  │     └── nettnett1 bucket
-  │         └── user_firstname_lastname/
-  │             └── item-title-folder/
-  │                 ├── file1.mp3
-  │                 ├── file2.jpg
-  │                 └── metadata.json
+  │     ├── nettnett1 (PUBLIC) — member uploads + radio media library
+  │     │     └── user_firstname_lastname/item-title/files + metadata.json
+  │     └── nettnett-recordings (PRIVATE) — live session recordings
+  │           └── {dj_username}/stream_YYYYMMDD-HHMMSS.mp3 (+ .ia.json sidecars)
   │
-  ├── Internet Archive (optional)
-  │     └── identifier: user_firstname_lastname-item-title
+  ├── Internet Archive (optional, for uploads and recordings)
   │
-  └── UGREEN NAS (DXP4800 Plus)
-        ├── AzuraCast (Docker) → Radio streaming
-        │     ├── Icecast (streaming server)
-        │     └── Liquidsoap (auto-DJ)
-        ├── rclone (Docker) → B2 backup sync
-        └── Cloudflare Named Tunnel (Docker) → Public access
-              ├── radio.radionettnettstream.com → AzuraCast
-              └── sync.radionettnettstream.com → rclone webhook
+  ├── Hetzner Cloud VPS "nettnett-radio" (49.12.191.80, Falkenstein)
+  │     └── AzuraCast (Docker, /var/azuracast) → radionettnettstream.com
+  │           ├── Icecast (streaming) + Liquidsoap (auto-DJ)
+  │           ├── Media storage = s3://nettnett1/ (reads the public bucket)
+  │           ├── Recordings storage = s3://nettnett-recordings/ (writes)
+  │           └── Harbor (port 8005) — live DJ input via Webcast WebSocket
+  │
+  └── UGREEN NAS (optional local backup only)
+        ├── rclone webhook (sync.radionettnettstream.com) — B2→NAS backup
+        └── legacy AzuraCast (decommission pending)
 ```
+
+**Domains:**
+- `radionettnettstream.com` (root, DNS-only/grey cloud) → Hetzner AzuraCast (stream, API, WebDJ)
+- `radio.` / `sync.` subdomains → legacy NAS Cloudflare Tunnel (backup only)
+- `nettnettradio.com` → future official site domain (pending Vercel hookup)
 
 ---
 
-## File Structure
+## File Structure (key paths)
 
 ```
 nettnett/
 ├── app/
+│   ├── (public)/                    # about, curators, participate, program
+│   ├── (admin)/                     # dashboard, management, admin
 │   ├── api/
-│   │   ├── auth/
-│   │   │   ├── register/route.ts   # Register user + create B2 folder
-│   │   │   ├── login/route.ts      # Login with bcrypt verify
-│   │   │   └── logout/route.ts     # Clear session cookie
-│   │   ├── files/
-│   │   │   ├── upload/route.ts     # Upload to B2 + optional IA
-│   │   │   ├── delete/route.ts     # Delete from B2 + optional IA
-│   │   │   └── list/route.ts       # List items from B2
-│   │   └── setup/route.ts          # One-time DB table creation
-│   ├── login/
-│   │   └── page.tsx                # Auth landing (logo + AuthForm)
-│   ├── dashboard/
-│   │   ├── layout.tsx              # Auth check + Navbar wrapper
-│   │   └── page.tsx                # UploadForm + ItemList
-│   ├── globals.css                 # Black theme, Helvetica
-│   ├── layout.tsx                  # Root layout
-│   └── page.tsx                    # Public radio player home
+│   │   ├── auth/                    # register, login, logout, session
+│   │   ├── files/                   # presign, finalize, upload, delete, list,
+│   │   │                            # update, send-to-ia
+│   │   ├── radio/
+│   │   │   ├── route.ts             # Authenticated proxy to AzuraCast API
+│   │   │   │                        # (playlists, streamers, URL broadcast actions)
+│   │   │   ├── schedule/route.ts    # Public schedule for calendar/program
+│   │   │   ├── metadata/route.ts    # Public track metadata enrichment
+│   │   │   └── broadcast-status/route.ts  # Public URL-broadcast status
+│   │   ├── recordings/route.ts      # List/play/delete recordings + send to IA
+│   │   ├── admin/users/...          # Admin user management
+│   │   ├── management/session/      # Exclusive management lock (5min timeout)
+│   │   └── setup/route.ts           # One-time DB table creation + migrations
+│   ├── login/  ├── globals.css  └── layout.tsx / page.tsx
 ├── components/
-│   ├── RadioPlayer.tsx              # AzuraCast stream player
-│   ├── AuthForm.tsx                # Login/Register toggle form
-│   ├── Navbar.tsx                  # Sticky navbar, hide on scroll
-│   ├── UploadForm.tsx              # Two-column upload form
-│   ├── ItemList.tsx                # Uploaded items with IA badges
-│   ├── RichTextEditor.tsx          # contentEditable rich text
-│   ├── FileUploadZone.tsx          # (legacy) Simple upload zone
-│   └── FileList.tsx                # (legacy) Simple file list
+│   ├── RadioPlayer.tsx / RadioProvider.tsx / NavMiniPlayer.tsx
+│   ├── ManagementTabs.tsx           # Stream | URL Broadcast | Playlists |
+│   │                                # Calendar | Streamers | Recordings
+│   ├── NowPlayingControl.tsx / PlaylistManager.tsx / ScheduleCalendar.tsx
+│   ├── StreamerManager.tsx          # DJ accounts + native Live Studio
+│   ├── LiveStudio.tsx               # Browser broadcasting UI (mic picker,
+│   │                                # signal check, VU meter, mute, metadata)
+│   ├── UrlBroadcast.tsx             # Instant + scheduled URL broadcasts
+│   ├── RecordingsManager.tsx        # Recordings list + IA publish + delete
+│   ├── UploadForm.tsx / ItemList.tsx / RichTextEditor.tsx
+│   ├── AdminPanel.tsx / ManagementGate.tsx / AuthForm.tsx / Navbar.tsx
 ├── lib/
-│   ├── db.ts                       # Postgres pool (NileDB)
-│   ├── db-init.ts                  # CREATE TABLE scripts
-│   ├── auth.ts                     # JWT sign/verify/session
-│   ├── b2.ts                       # Backblaze B2 S3 client
-│   └── internet-archive.ts         # IA upload/delete via https
-├── middleware.ts                    # Route protection
-├── nas/
-│   ├── docker-compose.yml          # NAS webhook + tunnel config
-│   ├── webhook.sh                  # HTTP handler for rclone sync
-│   ├── .env.example                # NAS env vars template
-│   └── SETUP.md                    # NAS setup instructions
-├── public/
-│   └── logo_nettnett.jpg
-└── .env.local                      # All credentials
+│   ├── db.ts / db-init.ts / auth.ts
+│   ├── b2.ts                        # Public bucket (uploads, presigned PUTs)
+│   ├── b2-recordings.ts             # Private recordings bucket (presigned GETs)
+│   ├── internet-archive.ts          # IA S3 API via native https (LOW auth)
+│   ├── audio-duration.ts            # Remote MP3 duration+title detection
+│   └── webcaster.ts                 # Browser→harbor live streaming (Webcast)
+├── middleware.ts                    # Route protection (cookie presence)
+├── nas/                             # Legacy NAS webhook + tunnel config
+└── .env.local
 ```
 
 ---
@@ -108,255 +113,130 @@ nettnett/
 DATABASE_URL=postgres://...@us-west-2.db.thenile.dev/nettnett
 
 # JWT Secret (7-day token expiry)
-JWT_SECRET=your-secret-key
+JWT_SECRET=...
 
-# Backblaze B2 (S3-compatible)
+# Backblaze B2 — main PUBLIC bucket (uploads + radio media)
 B2_ENDPOINT=https://s3.us-west-004.backblazeb2.com
-B2_KEY_ID=your-key-id
-B2_APPLICATION_KEY=your-app-key
+B2_KEY_ID=...
+B2_APPLICATION_KEY=...
 B2_BUCKET_NAME=nettnett1
 B2_REGION=us-west-004
 
+# Backblaze B2 — PRIVATE recordings bucket (AzuraCast writes live sessions)
+B2_RECORDINGS_BUCKET_NAME=nettnett-recordings
+B2_RECORDINGS_KEY_ID=...
+B2_RECORDINGS_APPLICATION_KEY=...
+
 # Internet Archive S3 API
-IA_S3_ACCESS_KEY=your-ia-access-key
-IA_S3_SECRET_KEY=your-ia-secret-key
+IA_S3_ACCESS_KEY=...
+IA_S3_SECRET_KEY=...
 
-# AzuraCast Radio (NAS via Cloudflare Named Tunnel)
-NEXT_PUBLIC_AZURACAST_URL=https://radio.radionettnettstream.com
+# AzuraCast Radio (Hetzner VPS, root domain, DNS-only)
+NEXT_PUBLIC_AZURACAST_URL=https://radionettnettstream.com
+AZURACAST_API_KEY=...        # admin API key created on the Hetzner AzuraCast
+AZURACAST_STATION_ID=1
 
-# NAS Sync Webhook (via Cloudflare Named Tunnel)
+# NAS Sync Webhook (legacy backup, via Cloudflare Named Tunnel)
 NAS_WEBHOOK_URL=https://sync.radionettnettstream.com/sync
-NAS_WEBHOOK_SECRET=your-shared-webhook-secret
+NAS_WEBHOOK_SECRET=...
 ```
+
+⚠️ `NEXT_PUBLIC_*` vars are baked at build time — changing them in Vercel requires a **Redeploy**.
+
+---
+
+## AzuraCast Server (Hetzner)
+
+- **VPS:** Hetzner CPX12 (1 vCPU, 2GB, 40GB), Falkenstein, IP `49.12.191.80`, Ubuntu 24.04
+- **Install:** official `docker.sh` at `/var/azuracast` (Stable channel); SSH as root with key auth
+- **Station:** name/shortcode `nettnett`, station ID `1`
+- **Stream URL:** `https://radionettnettstream.com/listen/nettnett/radio.mp3`
+- **Now Playing API:** `https://radionettnettstream.com/api/nowplaying/nettnett`
+- **HTTPS:** Let's Encrypt built into AzuraCast (requires the DNS record to be grey-cloud/DNS-only in Cloudflare)
+- **Media storage:** Remote S3 → `s3://nettnett1/` (whole bucket, path-style ON). AzuraCast indexes the members' uploads automatically (~5min rescan); only files added to a playlist actually broadcast
+- **Recordings storage:** Remote S3 → `s3://nettnett-recordings/` (private bucket). `record_streams` mp3 192kbps — every live DJ session is recorded and uploaded automatically on disconnect
+- **Streamers enabled** (`enable_streamers`, harbor port 8005); WebDJ page at `/public/nettnett/dj`
+- **Web Proxy for Radio: ON** — stream + WebDJ ride ports 80/443 (`/listen/...`, `wss://.../webdj/nettnett/`)
+
+### Critical AzuraCast gotchas (learned the hard way)
+
+1. **B2 canned-ACL rule:** AzuraCast's S3 writes send `x-amz-acl: private`. B2 only accepts an ACL matching the bucket's visibility → writes to the PUBLIC bucket fail (`Unsupported value for canned acl 'private'`) — this is why recordings live in a separate PRIVATE bucket. Cover-art writes to the public media bucket fail harmlessly (cosmetic).
+2. **Remote playlist hijack:** a `remote_url` playlist with NO schedule items — even disabled — gets baked into the Liquidsoap config as an always-available `mksafe(input.http(...))` source and hijacks the rotation with empty metadata after a station restart. This also wedges the nowplaying worker ("No track to update" crash loop → station shows offline while audio streams). **Always DELETE URL-broadcast playlists, never just disable** (the app's stop action does this).
+3. **Wedged nowplaying worker:** if `/api/nowplaying/nettnett` returns "Record not found" or stale data while the stream plays → `ssh root@49.12.191.80` then `docker exec azuracast supervisorctl restart php-nowplaying`.
+4. **Admin API:** `X-API-Key` header. When PUTting `/api/admin/station/1`, send the FULL `backend_config` object — partial nested writes clobber the rest.
+
+---
+
+## Radio Management Features
+
+All under `/management` (tabs), talking to AzuraCast through the authenticated proxy `app/api/radio/route.ts` (GET `?endpoint=...` whitelist + POST `{action: ...}`).
+
+### URL Broadcast (tab)
+Airs a public MP3/stream URL (replaces the legacy Telegram flow). **Instant:** creates a fresh `remote_url` playlist named `URL Broadcast — {title}`, schedules it "now" (station timezone) with `interrupt`, reloads; switch takes ~30s. **Stop:** DELETES the playlist + reload (see gotcha #2). **Scheduled:** one playlist per event (`URL: {title}`), date-bound, shows up in the Calendar tab. **Duration & title auto-detection** (`lib/audio-duration.ts`): exact via the IA metadata API (supports both `archive.org/download/...` and direct node `xxx.archive.org/N/items/...` URLs), else MP3 header parse (Xing/VBR-aware), else filename/1h fallback. Because remote streams usually carry no metadata (AzuraCast would show "Station Offline"), the human title is embedded in the playlist name and surfaced by the public endpoint `/api/radio/broadcast-status`, which `RadioProvider` polls to override the player display.
+
+### Live Studio (Streamers tab)
+Native browser broadcasting — no BUTT/external software. `lib/webcaster.ts`: mic capture → MP3 192kbps encoded in-browser (`@breezystack/lamejs`; note: only its ESM build exports `Mp3Encoder`) → WebSocket subprotocol `webcast` to `wss://radionettnettstream.com/webdj/nettnett/` → Liquidsoap harbor with DJ credentials. UI: mic picker + pre-live signal check (VU meter + signal dot), Go Live/End, mute (streams silence; connection and recording continue), now-playing title updates, leave-page warning. AzuraCast's WebDJ page remains linked as "Advanced studio" fallback. DJ accounts are managed in the same tab (create/edit/delete streamers).
+
+### Recordings (tab)
+Live sessions auto-record to the private bucket. The tab lists them (DJ, date, estimated duration from size@192kbps, size) with presigned play/download URLs, optional **publish to Internet Archive** (buffers B2→IA, identifier `nettnett-live-...`, sidecar `{key}.ia.json` marks sent state, route has `maxDuration = 300`), and delete (removes B2 object + sidecar; the IA copy stays).
+
+### Playlists / Calendar / Streamers
+Pre-existing features: playlist CRUD + song assignment by B2 path, weekly schedule with `interrupt` (AzuraCast times are integers 900=09:00, ISO days 1=Mon..7=Sun — NOT JS days), DJ account management.
 
 ---
 
 ## Services Configuration
 
 ### NileDB (PostgreSQL)
-
-- **Provider:** NileDB (Postgres-compatible, serverless)
-- **Connection:** SSL required (`rejectUnauthorized: false`)
-- **Important:** NileDB has a built-in `users` table in the `users` schema. Our app uses `public.users` to avoid conflicts. All SQL queries must use explicit `public.` schema prefix.
-- **Tables:**
-  - `public.users` - User accounts (id, email, first_name, last_name, password_hash)
-  - `public.files` - File metadata (mostly unused, file listing comes from B2 directly)
-- **Setup:** Hit `GET /api/setup` once to create tables
+- SSL required; **always use explicit `public.` schema** (NileDB has a built-in `users` table in its own schema)
+- Tables: `public.users` (+ `role`, `can_manage` columns), `public.items`, `public.management_sessions`, legacy `public.files`
+- Setup/migrations: `GET /api/setup` (idempotent)
 
 ### Backblaze B2
-
-- **SDK:** `@aws-sdk/client-s3` with `forcePathStyle: true` (required for B2)
-- **Bucket:** `nettnett1` (public readable)
-- **Public URL pattern:** `https://f004.backblazeb2.com/file/nettnett1/{key}`
-- **Folder structure:** `user_firstname_lastname/item-title/files`
-- **Metadata:** Each item has a `metadata.json` file alongside its uploaded files
-- **File listing:** Items are listed directly from B2 (not from database). The `listUserItems()` function reads B2 objects, groups by folder, and parses `metadata.json` for each item.
-- **On user registration:** A folder `user_firstname_lastname/` is created in B2
+- SDK: `@aws-sdk/client-s3` with `forcePathStyle: true` (required for B2)
+- `nettnett1` (public): browser uploads via presigned PUT URLs (`/api/files/presign` → direct upload → `/api/files/finalize`), bypassing Vercel's 4.5MB limit. Public URL: `https://f004.backblazeb2.com/file/nettnett1/{key}`
+- `nettnett-recordings` (private): AzuraCast writes; app reads via presigned GETs
+- File listing for the dashboard comes from B2 directly (`listUserItems`), not the DB
 
 ### Internet Archive
+- S3-like API at `s3.us.archive.org`, `Authorization: LOW key:secret`
+- Uses Node's native `https` (fetch breaks the LOW auth header); handles 307 redirects
+- Deletes are queued and slow (hours/days); `x-archive-cascade-delete: 1`
 
-- **API:** S3-like API at `s3.us.archive.org`
-- **Auth:** `Authorization: LOW access_key:secret_key` header
-- **Important:** Uses Node.js native `https` module (NOT `fetch`). The `fetch` API interferes with the `Authorization: LOW` header format.
-- **Identifier format:** `user_firstname_lastname-item-title` (sanitized, max 80 chars)
-- **Metadata headers:** Sent as `x-archive-meta-*` headers on first file upload only
-- **Auto-bucket:** First file upload creates the IA item with `x-archive-auto-make-bucket: 1`
-- **Collection:** Defaults to `opensource`
-- **Deletion:** IA deletes are queued and NOT instant (can take hours/days). Uses `x-archive-cascade-delete: 1` header.
-- **307 Redirects:** The `iaRequest()` function handles 307 redirects from IA's S3 API
-- **Account:** Items appear under the IA account associated with the S3 keys
-
----
-
-### AzuraCast (Radio Streaming)
-
-- **Runs on:** UGREEN DXP4800 Plus NAS (Docker)
-- **Installation path:** `/volume1/docker/azuracast/`
-- **Local access:** `http://192.168.1.102:8080`
-- **Public access:** Via Cloudflare Named Tunnel → `https://radio.radionettnettstream.com`
-- **Admin login:** `admin@admin.com` (local only)
-- **Station name:** `nettnett`
-- **Components:** Icecast (streaming) + Liquidsoap (auto-DJ)
-- **Stream URL:** `https://radio.radionettnettstream.com/listen/nettnett/radio.mp3`
-- **Now Playing API:** `https://radio.radionettnettstream.com/api/nowplaying/nettnett`
-- **Docker containers on NAS:** `azuracast`, `azuracast_updater`, `cloudflare-tunnel`, `rclone-backblaze-sync`, `qbittorrent`
-
----
-
-## Authentication Flow
-
-1. **Register:** `POST /api/auth/register`
-   - Validates email, firstName, lastName, password (min 6 chars)
-   - Hashes password with bcrypt (12 salt rounds)
-   - Inserts into `public.users`
-   - Creates B2 user folder
-   - Signs JWT and sets `nettnett_session` httpOnly cookie (7 days)
-
-2. **Login:** `POST /api/auth/login`
-   - Queries `public.users` by email
-   - Compares password with bcrypt
-   - Signs JWT and sets cookie
-
-3. **Session:** `getSession()` in `lib/auth.ts`
-   - Reads cookie, verifies JWT
-   - Returns `{ userId, email, firstName, lastName }` or null
-
-4. **Middleware:** Checks cookie presence only (JWT not verifiable in Edge runtime)
-   - `/` is public (radio player, no auth check)
-   - `/login` with cookie → redirect to `/dashboard`
-   - `/dashboard/*` without cookie → redirect to `/login`
-
-5. **Logout:** `POST /api/auth/logout` → clears cookie
-
----
-
-## Upload Flow
-
-1. User fills the UploadForm (title, description, files, optional metadata)
-2. Client sends `FormData` to `POST /api/files/upload`
-3. Server verifies JWT session
-4. Files uploaded to B2: `user_folder/title_folder/filename`
-5. If "Upload to Internet Archive" is checked:
-   - Sanitize title into IA identifier
-   - Upload each file to IA with metadata headers (first file only)
-   - Store IA identifier and URL in metadata
-6. Save `metadata.json` to B2 with all item info
-7. Return success response
-
----
-
-## Key Technical Decisions
-
-- **Auth:** bcryptjs (pure JS, Vercel-compatible) + jsonwebtoken + httpOnly cookies
-- **DB:** `pg` Pool with SSL for NileDB. Used `public.` schema prefix to avoid NileDB's built-in `users` table
-- **B2:** `@aws-sdk/client-s3` with `forcePathStyle: true` (required for B2 compatibility)
-- **IA:** Native `https` module instead of `fetch` (fetch interferes with LOW auth header)
-- **File listing:** Reads directly from B2 bucket (not from database) for accuracy
-- **Rich text:** Custom `contentEditable` editor (no external dependency). Outputs HTML accepted by Internet Archive
-- **Uploads:** Server-side via API route (FormData). Vercel 4.5MB limit applies
-- **Middleware:** Only checks cookie presence. Full JWT verification in server components/API routes
-- **File keys:** `user_firstname_lastname/item-title-folder/filename` format
-
----
-
-## Components
-
-### RadioPlayer (`components/RadioPlayer.tsx`)
-- Streams audio from AzuraCast via HTML5 `<audio>` element
-- Polls AzuraCast `/api/nowplaying/nettnett` every 15 seconds
-- Shows current track title and artist
-- Play/Pause toggle with large circular button
-- Visual equalizer animation when playing
-- LIVE badge when a streamer is connected
-- Listener count display
-- Graceful "Station Offline" state
-- Stream URL from `NEXT_PUBLIC_AZURACAST_URL` env variable
-
-### UploadForm (`components/UploadForm.tsx`)
-- Two-column responsive layout (stacks on mobile)
-- Left: Title, Description (rich text), Media Type, Creator, Date, Language, Tags
-- Right: Drag & drop zone, file list, IA checkbox, progress bar, upload button
-- Progress tracking with step indicators
-- All user-facing text says "Cloud" (not "Backblaze")
-
-### ItemList (`components/ItemList.tsx`)
-- Lists uploaded items with IA status badges (green "Internet Archive" or gray "Cloud only")
-- Each item shows files with "Ver" (view) links to B2 public URLs
-- Delete button with different confirmation for IA items
-- Date formatting
-
-### Navbar (`components/Navbar.tsx`)
-- Sticky positioned, hides on scroll down, shows on scroll up
-- `h-14` height with backdrop blur
-- Shows "Welcome, FirstName LastName" + Logout button
-- Logo on the left
-
-### RichTextEditor (`components/RichTextEditor.tsx`)
-- `contentEditable` div with toolbar
-- Buttons: Bold, Italic, Underline, H1, H2, P, Lists, Link, Clear
-- Outputs HTML (compatible with IA descriptions)
-- Paste handler strips formatting (plain text only)
-
-### AuthForm (`components/AuthForm.tsx`)
-- Toggle between Sign In and Register modes
-- Fields: email, password, firstName (register), lastName (register)
-- Error handling and loading states
+### Management sessions
+- Exclusive lock: only one user edits the radio at a time (`public.management_sessions`, 5-min inactivity timeout, kick/release/heartbeat via `/api/management/session`)
 
 ---
 
 ## Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Run development server
-npm run dev
-
-# First-time setup: create database tables
-# Visit http://localhost:3000/api/setup
-
-# Build for production
+npm run dev          # usually http://localhost:3001 (3000 taken by other projects)
+# First-time DB setup: visit /api/setup
 npm run build
+npx tsc --noEmit     # typecheck
 ```
+
+Git remote: `git@github.com:md-ap/nettnett.git` (SSH as `md-ap`). Vercel auto-deploys `main`.
 
 ---
 
 ## Known Issues & Notes
 
-- **Vercel file size limit:** 4.5MB per upload (Vercel serverless function limit)
-- **IA deletes are async:** Items may still appear on archive.org for hours after deletion
-- **NileDB schema:** Always use `public.users` and `public.files` in queries to avoid NileDB's built-in `users` table conflict
-- **Middleware deprecation:** Next.js 16 shows warning about `middleware` → `proxy` migration. Currently functional but may need updating.
-- **Legacy components:** `FileUploadZone.tsx` and `FileList.tsx` are superseded by `UploadForm.tsx` and `ItemList.tsx`
-
----
-
-## NAS Integration (UGREEN DXP4800 Plus)
-
-- **rclone (Docker):** Syncs Backblaze B2 bucket to NAS on-demand via webhook
-- **Sync path:** `Shared Folder > docker > rclone > data > user_mario_alvarado`
-- **Purpose:** Local backup of all uploaded files + radio streaming source for AzuraCast
-
-### NAS Sync Architecture (Webhook-based)
-
-Previously rclone ran `bisync` every 5 minutes, which caused excessive Backblaze API calls and exceeded the free tier cap. Now the sync is triggered on-demand after each upload.
-
-```
-Upload (Vercel) → B2 → Vercel calls POST /sync → NAS webhook → rclone copy B2→NAS
-```
-
-**NAS Docker containers:**
-- `rclone-backblaze-sync` — Webhook server (socat + rclone, port 9222). Listens for POST /sync, runs `rclone copy` in background
-- `cloudflare-tunnel` — Named tunnel exposing both AzuraCast and webhook via `radionettnettstream.com` subdominios
-- `azuracast` — Radio streaming server (Icecast + Liquidsoap)
-- `azuracast_updater` — AzuraCast auto-updater
-
-**Config files:** `nas/docker-compose.yaml` and `nas/webhook.sh` in this repo. Copy to NAS at `/volume1/docker/rclone-webhook/` (or equivalent path).
-
-**Webhook auth:** Bearer token in `NAS_WEBHOOK_SECRET` env var (Vercel) must match `WEBHOOK_SECRET` in NAS `.env`.
-
-**Upload route integration:** `triggerNasSync()` in `app/api/files/upload/route.ts` calls the webhook fire-and-forget after successful B2 upload.
-
-### Cloudflare Named Tunnel (radionettnettstream.com)
-
-Using a **single Named Tunnel** with two public hostnames (fixed URLs, never change):
-
-| Subdomain | Service URL | Purpose |
-|-----------|-------------|---------|
-| `radio.radionettnettstream.com` | `azuracast:8080` | Public radio streaming |
-| `sync.radionettnettstream.com` | `rclone-backblaze-sync:9222` | Upload sync trigger |
-
-**Vercel env vars (fixed, no more updating):**
-- `NEXT_PUBLIC_AZURACAST_URL` = `https://radio.radionettnettstream.com`
-- `NAS_WEBHOOK_URL` = `https://sync.radionettnettstream.com/sync`
+- **Remote streams show no metadata natively** — mitigated app-side via `/api/radio/broadcast-status` override (see URL Broadcast section)
+- **IA deletes are async** — items linger on archive.org for hours after deletion
+- **Bots hammer the SFTP port (2022)** on the Hetzner box — pending: Hetzner Cloud Firewall (allow 22/80/443 only; SFTP unused since media lives in B2)
+- **Crossfade set to `none`** during debugging (was not the culprit) — can be re-enabled via station backend_config
+- **CPX12 is the smallest viable size** — if Liquidsoap struggles under load, rescale to CPX22 with "CPU/RAM only" (keeps the change reversible)
+- **NAS decommission pending** — the `sync.` webhook still fires after uploads (harmless local backup); the old NAS AzuraCast and `radio.` tunnel hostname can be retired
+- **Legacy components:** `FileUploadZone.tsx` / `FileList.tsx` superseded by `UploadForm.tsx` / `ItemList.tsx`
+- Middleware only checks cookie presence (JWT not verifiable in Edge runtime); full verification happens server-side
 
 ---
 
 ## Deployment (Vercel)
 
-1. Push to GitHub
-2. Connect repo to Vercel
-3. Add all environment variables in Vercel dashboard
-4. Deploy
-5. Run `/api/setup` once to create database tables
+1. Push to `main` → auto-deploy
+2. Env vars live in the Vercel dashboard (remember: `NEXT_PUBLIC_*` changes need a Redeploy)
+3. `/api/setup` once after DB changes (idempotent migrations)
