@@ -56,14 +56,46 @@ export default function NowPlayingControl() {
 
   const fetchNowPlaying = useCallback(async () => {
     try {
-      const [npRes, statusRes] = await Promise.all([
+      const [npRes, statusRes, bcRes] = await Promise.all([
         fetch("/api/radio?endpoint=nowplaying", { cache: "no-store" }),
         fetch("/api/radio?endpoint=status", { cache: "no-store" }),
+        fetch("/api/radio/broadcast-status", { cache: "no-store" }).catch(() => null),
       ]);
       const json = await npRes.json();
       const status = await statusRes.json();
 
       const isOnline = status.backendRunning === true && status.frontendRunning === true;
+
+      // URL broadcasts carry no stream metadata (AzuraCast reports
+      // "Station Offline" as the song) — override with the real title.
+      let broadcast: { active: boolean; title: string | null } = {
+        active: false,
+        title: null,
+      };
+      if (bcRes?.ok) {
+        try {
+          broadcast = await bcRes.json();
+        } catch {
+          // keep default
+        }
+      }
+      if (broadcast.active) {
+        setData({
+          current: {
+            title: broadcast.title || "URL Broadcast",
+            artist: "URL Broadcast",
+            art: null,
+          },
+          next: null,
+          isLive: false,
+          isOnline,
+          listeners: json.listeners?.current || 0,
+          elapsed: 0,
+          duration: 0,
+        });
+        setLoading(false);
+        return;
+      }
 
       const np = json.now_playing || {};
       const song = np.song || {};
