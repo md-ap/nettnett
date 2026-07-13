@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireRole, isAdmin } from "@/lib/auth";
+import { logActivity, actorFromSession } from "@/lib/activity-log";
 
 export async function DELETE(
   request: NextRequest,
@@ -39,6 +40,12 @@ export async function DELETE(
 
     // Delete user (CASCADE deletes items and files)
     await pool.query("DELETE FROM public.users WHERE id = $1", [userId]);
+
+    await logActivity(
+      actorFromSession(auth.session),
+      "admin.user_delete",
+      `Deleted user ${userResult.rows[0].email}`
+    );
 
     return NextResponse.json({ message: "User deleted successfully" });
   } catch (error) {

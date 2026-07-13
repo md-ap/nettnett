@@ -7,8 +7,9 @@ import ScheduleCalendar from "./ScheduleCalendar";
 import StreamerManager from "./StreamerManager";
 import UrlBroadcast from "./UrlBroadcast";
 import RecordingsManager from "./RecordingsManager";
+import ActivityLog from "./ActivityLog";
 
-type Tab = "stream" | "broadcast" | "playlists" | "calendar" | "streamers" | "recordings";
+type Tab = "stream" | "broadcast" | "playlists" | "calendar" | "streamers" | "recordings" | "logs";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "stream", label: "Stream" },
@@ -17,6 +18,7 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "calendar", label: "Calendar" },
   { id: "streamers", label: "Streamers" },
   { id: "recordings", label: "Recordings" },
+  { id: "logs", label: "Logs" },
 ];
 
 export default function ManagementTabs() {
@@ -48,6 +50,7 @@ export default function ManagementTabs() {
       {activeTab === "calendar" && <ScheduleCalendar />}
       {activeTab === "streamers" && <StreamerManager />}
       {activeTab === "recordings" && <RecordingsManager />}
+      {activeTab === "logs" && <ActivityLog />}
     </div>
   );
 }

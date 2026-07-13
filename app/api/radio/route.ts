@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, canManageRadio } from "@/lib/auth";
 import { detectRemoteAudioDuration } from "@/lib/audio-duration";
+import { logActivity, actorFromSession } from "@/lib/activity-log";
 
 const AZURACAST_URL = process.env.NEXT_PUBLIC_AZURACAST_URL || "";
 const AZURACAST_API_KEY = process.env.AZURACAST_API_KEY || "";
@@ -97,7 +98,16 @@ export async function POST(request: NextRequest) {
     // for why disabling is not enough).
     if (action === "broadcast-url") {
       try {
-        return await handleBroadcastUrl(body);
+        const res = await handleBroadcastUrl(body);
+        if (res.ok) {
+          const data = await res.clone().json().catch(() => null);
+          await logActivity(
+            actorFromSession(auth.session),
+            "broadcast.start",
+            `Started URL broadcast "${data?.displayTitle || body.url}" (${data?.durationMinutes ?? "?"} min)`
+          );
+        }
+        return res;
       } catch (e) {
         console.error("broadcast-url error:", e);
         return NextResponse.json(
@@ -108,7 +118,15 @@ export async function POST(request: NextRequest) {
     }
     if (action === "stop-broadcast-url") {
       try {
-        return await handleStopBroadcastUrl();
+        const res = await handleStopBroadcastUrl();
+        if (res.ok) {
+          await logActivity(
+            actorFromSession(auth.session),
+            "broadcast.stop",
+            "Stopped the URL broadcast"
+          );
+        }
+        return res;
       } catch (e) {
         console.error("stop-broadcast-url error:", e);
         return NextResponse.json(
@@ -131,7 +149,15 @@ export async function POST(request: NextRequest) {
     }
     if (action === "schedule-url-broadcast") {
       try {
-        return await handleScheduleUrlBroadcast(body);
+        const res = await handleScheduleUrlBroadcast(body);
+        if (res.ok) {
+          await logActivity(
+            actorFromSession(auth.session),
+            "broadcast.schedule",
+            `Scheduled URL broadcast "${body.title}" for ${body.date} ${body.startTime}`
+          );
+        }
+        return res;
       } catch (e) {
         console.error("schedule-url-broadcast error:", e);
         return NextResponse.json(
@@ -142,7 +168,15 @@ export async function POST(request: NextRequest) {
     }
     if (action === "delete-url-broadcast") {
       try {
-        return await handleDeleteUrlBroadcast(Number(body.playlistId));
+        const res = await handleDeleteUrlBroadcast(Number(body.playlistId));
+        if (res.ok) {
+          await logActivity(
+            actorFromSession(auth.session),
+            "broadcast.delete",
+            `Deleted URL broadcast playlist #${body.playlistId}`
+          );
+        }
+        return res;
       } catch (e) {
         console.error("delete-url-broadcast error:", e);
         return NextResponse.json(
@@ -372,6 +406,7 @@ export async function POST(request: NextRequest) {
     // Some endpoints return 204 No Content
     if (res.status === 204) {
       console.log(`[AzuraCast] Response: 204 No Content`);
+      await logRadioAction(auth.session, action, body);
       return NextResponse.json({ success: true });
     }
 
@@ -383,6 +418,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(data, { status: res.status });
     }
 
+    await logRadioAction(auth.session, action, body);
     return NextResponse.json(data);
   } catch (error) {
     console.error("AzuraCast action error:", error);
@@ -390,6 +426,84 @@ export async function POST(request: NextRequest) {
       { error: "Failed to perform action" },
       { status: 502 }
     );
+  }
+}
+
+// Audit descriptions for the generic proxied actions (Logs tab). Playlist
+// names aren't always in the request body — fall back to #id.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function logRadioAction(session: Parameters<typeof actorFromSession>[0], action: string, body: any) {
+  const id = (v: unknown) => (v === undefined || v === null ? "?" : String(v));
+  const playlistRef = body.playlistName ? `"${body.playlistName}"` : `#${id(body.playlistId)}`;
+  const file = String(body.mediaPath || body.mediaId || "file");
+  const shortFile = file.split("/").pop() || file;
+
+  let entry: { key: string; detail: string } | null = null;
+  switch (action) {
+    case "skip":
+      entry = { key: "station.skip", detail: "Skipped the current track" };
+      break;
+    case "start":
+      entry = { key: "station.start", detail: "Started the station backend" };
+      break;
+    case "stop":
+      entry = { key: "station.stop", detail: "Stopped the station backend" };
+      break;
+    case "restart":
+      entry = { key: "station.restart", detail: "Restarted the station" };
+      break;
+    case "queue-remove":
+      entry = { key: "station.queue_remove", detail: "Removed an entry from the queue" };
+      break;
+    case "playlist-toggle":
+      entry = { key: "playlist.toggle", detail: `Toggled playlist ${playlistRef} on/off` };
+      break;
+    case "playlist-update": {
+      const fields = ["weight", "order", "name"].filter((f) => body[f] !== undefined).join(", ");
+      entry = { key: "playlist.update", detail: `Updated playlist ${playlistRef}${fields ? ` (${fields})` : ""}` };
+      break;
+    }
+    case "playlist-reorder":
+      entry = { key: "playlist.reorder", detail: `Reordered songs in playlist ${playlistRef}` };
+      break;
+    case "add-to-playlist":
+      entry = { key: "playlist.add_song", detail: `Added "${shortFile}" to playlist ${playlistRef}` };
+      break;
+    case "remove-from-playlist":
+      entry = { key: "playlist.remove_song", detail: `Removed "${shortFile}" from its playlists` };
+      break;
+    case "create-playlist":
+      entry = { key: "playlist.create", detail: `Created playlist "${String(body.name || "")}"` };
+      break;
+    case "delete-playlist":
+      entry = { key: "playlist.delete", detail: `Deleted playlist ${playlistRef}` };
+      break;
+    case "schedule-playlist": {
+      const n = Array.isArray(body.scheduleItems) ? body.scheduleItems.length : 0;
+      entry = {
+        key: "calendar.schedule",
+        detail: `Updated the calendar for playlist ${playlistRef} (${n} slot${n === 1 ? "" : "s"})`,
+      };
+      break;
+    }
+    case "unschedule-playlist":
+      entry = { key: "calendar.unschedule", detail: `Removed playlist ${playlistRef} from the calendar` };
+      break;
+    case "create-streamer":
+      entry = { key: "dj.create", detail: `Created DJ account "${String(body.username || "")}"` };
+      break;
+    case "update-streamer":
+      entry = { key: "dj.update", detail: `Updated DJ account ${body.username ? `"${body.username}"` : `#${id(body.streamerId)}`}` };
+      break;
+    case "delete-streamer":
+      entry = { key: "dj.delete", detail: `Deleted DJ account #${id(body.streamerId)}` };
+      break;
+    case "disconnect-streamer":
+      entry = { key: "dj.disconnect", detail: "Disconnected the live DJ" };
+      break;
+  }
+  if (entry) {
+    await logActivity(actorFromSession(session), entry.key, entry.detail);
   }
 }
 

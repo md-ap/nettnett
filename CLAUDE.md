@@ -86,6 +86,8 @@ nettnett/
 │   │   │   ├── metadata/route.ts    # Public track metadata enrichment
 │   │   │   └── broadcast-status/route.ts  # Public URL-broadcast status
 │   │   ├── recordings/route.ts      # List/play/delete recordings + send to IA
+│   │   ├── activity/route.ts        # Audit trail: GET paginated log (mgmt-gated),
+│   │   │                            # POST whitelisted client events (stream.*)
 │   │   ├── admin/users/...          # Admin user management
 │   │   ├── management/session/      # Exclusive management lock (5min timeout)
 │   │   └── setup/route.ts           # Idempotent DB setup + migrations
@@ -95,7 +97,8 @@ nettnett/
 │   ├── RadioPlayer.tsx / RadioProvider.tsx / FloatingPlayer.tsx
 │   ├── ui/                          # Spinner, Modal, Button, Field primitives
 │   ├── ManagementTabs.tsx           # Stream | URL Broadcast | Playlists |
-│   │                                # Calendar | Streamers | Recordings
+│   │                                # Calendar | Streamers | Recordings | Logs
+│   ├── ActivityLog.tsx              # Logs tab: audit trail list + filters
 │   ├── NowPlayingControl.tsx / PlaylistManager.tsx / ScheduleCalendar.tsx
 │   ├── StreamerManager.tsx          # DJ accounts + native Live Studio
 │   ├── LiveStudio.tsx               # Browser broadcasting UI (mic picker,
@@ -112,6 +115,7 @@ nettnett/
 │   ├── db.ts / db-init.ts / auth.ts # auth.ts: requireRole (fresh-DB, fail-closed),
 │   │                                # getDbRole (display-only), hashToken, helpers
 │   ├── user-folder.ts               # allocateB2Folder for new users
+│   ├── activity-log.ts              # logActivity() — audit trail writes (never throws)
 │   ├── constants.ts / format.ts / schedule.ts   # client-safe shared consts/helpers
 │   ├── radio-client.ts              # postJson/radioPost/radioGet (AbortSignal)
 │   ├── http-retry.ts / nas-webhook.ts  # webhook retry + NAS backup triggers
@@ -221,6 +225,9 @@ Live sessions auto-record to the private bucket. The tab lists them (DJ, date, e
 ### Playlists / Calendar / Streamers
 Pre-existing features: playlist CRUD + song assignment by B2 path, weekly schedule with `interrupt` (AzuraCast times are integers 900=09:00, ISO days 1=Mon..7=Sun — NOT JS days), DJ account management.
 
+### Logs (tab)
+Audit trail of member/admin activity (`public.activity_log`, 180-day retention pruned on read). Server routes call `logActivity()` (`lib/activity-log.ts` — awaited, never throws) after successful mutations: uploads/edits/deletes/IA publishes, URL broadcasts (start/stop/schedule/delete), playlist + calendar + DJ-account changes, station actions, recordings, management-panel claims, admin user operations, registrations. Live-stream start/end is reported by the browser (LiveStudio → `POST /api/activity`, whitelisted `stream.*` actions only, since the DJ connects straight to the AzuraCast harbor). The tab lists entries with category badges, user, detail, timestamp; search + category filter + pagination.
+
 ---
 
 ## Auth, Roles & Email
@@ -262,7 +269,7 @@ Pre-existing features: playlist CRUD + song assignment by B2 path, weekly schedu
 
 ### NileDB (PostgreSQL)
 - SSL required; **always use explicit `public.` schema** (NileDB has a built-in `users` table in its own schema)
-- Tables: `public.users` (+ `role`, `email_verified`, `b2_folder` UNIQUE columns), `public.items`, `public.management_sessions`, `public.password_reset_tokens`, `public.email_verification_tokens`, `public.migration_log`, legacy `public.files` (no longer created or read)
+- Tables: `public.users` (+ `role`, `email_verified`, `b2_folder` UNIQUE columns), `public.items`, `public.management_sessions`, `public.activity_log`, `public.password_reset_tokens`, `public.email_verification_tokens`, `public.migration_log`, legacy `public.files` (no longer created or read)
 - Setup/migrations: `GET /api/setup` (idempotent; **admin-gated** — open only on a fresh install with no users)
 - ⚠️ **Local `.env.local` and Vercel point at the SAME database** — migrations run locally are live in production immediately
 

@@ -3,6 +3,7 @@ import { requireRole, canUpload } from "@/lib/auth";
 import { saveMetadata, isValidTitleFolder } from "@/lib/b2";
 import { s3Client, BUCKET_NAME } from "@/lib/b2";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { logActivity, actorFromSession } from "@/lib/activity-log";
 import pool from "@/lib/db";
 
 export async function PUT(request: NextRequest) {
@@ -86,6 +87,12 @@ export async function PUT(request: NextRequest) {
     } catch (dbErr) {
       console.error("Failed to update item in DB:", dbErr);
     }
+
+    await logActivity(
+      actorFromSession(auth.session),
+      "file.update",
+      `Edited metadata of "${title}"`
+    );
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -3,6 +3,7 @@ import { saveMetadata, titleToFolder, sanitizeFileName } from "@/lib/b2";
 import { requireRole, canUpload } from "@/lib/auth";
 import { sanitizeIdentifier } from "@/lib/internet-archive";
 import { triggerNasSync, triggerNasIaUpload } from "@/lib/nas-webhook";
+import { logActivity, actorFromSession } from "@/lib/activity-log";
 import pool from "@/lib/db";
 
 export async function POST(request: NextRequest) {
@@ -127,6 +128,12 @@ export async function POST(request: NextRequest) {
 
     // Wait for all webhooks to at least start (first attempt)
     await Promise.allSettled(webhookPromises);
+
+    await logActivity(
+      actorFromSession(auth.session),
+      "file.upload",
+      `Uploaded "${title}" (${safeUploadedFiles.length} file${safeUploadedFiles.length === 1 ? "" : "s"}${uploadToIA ? " + Internet Archive" : ""})`
+    );
 
     return NextResponse.json({
       success: true,

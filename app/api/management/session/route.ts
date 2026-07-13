@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireRole, canManageRadio } from "@/lib/auth";
+import { logActivity, actorFromSession } from "@/lib/activity-log";
 
 const INACTIVITY_TIMEOUT_MINUTES = 5;
 
@@ -105,6 +106,12 @@ export async function POST(request: NextRequest) {
         } finally {
           client.release();
         }
+
+        await logActivity(
+          actorFromSession(session),
+          "management.claim",
+          "Took control of the management panel"
+        );
 
         return NextResponse.json({ message: "Session claimed" });
       }

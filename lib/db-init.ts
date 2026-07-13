@@ -66,6 +66,35 @@ export async function migrateB2Folder() {
   }
 }
 
+// Audit trail for the management Logs tab: who did what, when. user_name is
+// denormalized so history survives user deletion (user_id then goes NULL).
+export async function migrateActivityLog() {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.activity_log (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+        user_name VARCHAR(200) NOT NULL,
+        action VARCHAR(100) NOT NULL,
+        detail TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_activity_log_created
+      ON public.activity_log(created_at DESC);
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_activity_log_action
+      ON public.activity_log(action);
+    `);
+    console.log("✓ activity_log migration complete");
+  } finally {
+    client.release();
+  }
+}
+
 export async function migrateAddRoleColumn() {
   const client = await pool.connect();
   try {

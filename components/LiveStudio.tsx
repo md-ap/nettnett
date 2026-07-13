@@ -37,6 +37,17 @@ export default function LiveStudio({ usernames }: LiveStudioProps) {
   const isLive = status === "live";
   const isConnecting = status === "connecting";
 
+  // Best-effort audit entry (Logs tab). The browser talks straight to the
+  // AzuraCast harbor, so the app server can't see go-live/end itself.
+  const reportActivity = useCallback((action: string, detail: string) => {
+    fetch("/api/activity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, detail }),
+      keepalive: true,
+    }).catch(() => {});
+  }, []);
+
   /* ─── Mic preview (signal check before going live) ─── */
 
   const stopPreview = useCallback(() => {
@@ -173,18 +184,23 @@ export default function LiveStudio({ usernames }: LiveStudioProps) {
     try {
       await caster.start();
       if (showTitle.trim()) caster.sendMetadata(showTitle.trim());
+      reportActivity(
+        "stream.start",
+        `Went live as "${username.trim()}"${showTitle.trim() ? ` — ${showTitle.trim()}` : ""}`
+      );
     } catch (e) {
       caster.stop();
       setStatus("error");
       setErrorDetail(e instanceof Error ? e.message : "Could not start the broadcast");
     }
-  }, [username, password, showTitle, deviceId, startPreview, stopPreview]);
+  }, [username, password, showTitle, deviceId, startPreview, stopPreview, reportActivity]);
 
   const endSession = useCallback(() => {
     casterRef.current?.stop();
     casterRef.current = null;
     setMuted(false);
-  }, []);
+    reportActivity("stream.stop", `Ended the live session as "${username.trim()}"`);
+  }, [username, reportActivity]);
 
   const toggleMute = useCallback(() => {
     const next = !muted;

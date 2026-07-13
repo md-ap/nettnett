@@ -8,6 +8,7 @@ import {
   deleteRecording,
 } from "@/lib/b2-recordings";
 import { uploadToInternetArchive, sanitizeIdentifier } from "@/lib/internet-archive";
+import { logActivity, actorFromSession } from "@/lib/activity-log";
 
 // Sending a recording to Internet Archive streams the whole file through
 // this function — allow the longest duration Vercel permits.
@@ -91,11 +92,22 @@ export async function POST(request: NextRequest) {
       };
       await saveIaSidecar(key, iaInfo);
 
+      await logActivity(
+        actorFromSession(auth.session),
+        "recordings.send_to_ia",
+        `Published recording "${filename}" to Internet Archive`
+      );
+
       return NextResponse.json({ success: true, ia: iaInfo });
     }
 
     if (action === "delete") {
       await deleteRecording(key);
+      await logActivity(
+        actorFromSession(auth.session),
+        "recordings.delete",
+        `Deleted recording "${key}"`
+      );
       return NextResponse.json({ success: true });
     }
 

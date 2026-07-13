@@ -3,6 +3,7 @@ import { requireRole, canUpload } from "@/lib/auth";
 import { saveMetadata, s3Client, BUCKET_NAME, isValidTitleFolder } from "@/lib/b2";
 import { sanitizeIdentifier } from "@/lib/internet-archive";
 import { triggerNasIaUpload } from "@/lib/nas-webhook";
+import { logActivity, actorFromSession } from "@/lib/activity-log";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import pool from "@/lib/db";
 
@@ -86,6 +87,12 @@ export async function POST(request: NextRequest) {
     // 7. Trigger NAS IA upload webhook (NAS syncs files from B2 then uploads to IA)
     console.log(`Send to IA: triggering NAS upload for ${iaIdentifier}`);
     await triggerNasIaUpload({ userFolder, titleFolder: folder, iaIdentifier });
+
+    await logActivity(
+      actorFromSession(auth.session),
+      "file.send_to_ia",
+      `Published "${title}" to Internet Archive`
+    );
 
     return NextResponse.json({
       success: true,

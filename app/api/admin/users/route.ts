@@ -4,6 +4,7 @@ import pool from "@/lib/db";
 import { requireRole, isAdmin, canManageRadio } from "@/lib/auth";
 import { createUserFolder } from "@/lib/b2";
 import { allocateB2Folder } from "@/lib/user-folder";
+import { logActivity, actorFromSession } from "@/lib/activity-log";
 
 export async function GET() {
   try {
@@ -112,6 +113,12 @@ export async function POST(request: NextRequest) {
     }
 
     const user = result.rows[0];
+
+    await logActivity(
+      actorFromSession(auth.session),
+      "admin.user_create",
+      `Created user ${user.email} (role ${user.role})`
+    );
 
     return NextResponse.json({
       message: "User created successfully",

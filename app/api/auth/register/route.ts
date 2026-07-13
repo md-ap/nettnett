@@ -8,6 +8,7 @@ import { allocateB2Folder } from "@/lib/user-folder";
 import { sendVerificationEmail } from "@/lib/email";
 import { verifyTurnstile } from "@/lib/turnstile";
 import { getAppUrl } from "@/lib/app-url";
+import { logActivity } from "@/lib/activity-log";
 
 export async function POST(request: NextRequest) {
   try {
@@ -78,6 +79,12 @@ export async function POST(request: NextRequest) {
 
     // Create user folder in Backblaze B2
     await createUserFolder(b2Folder);
+
+    await logActivity(
+      { userId: user.id, userName: `${firstName} ${lastName}`.trim() },
+      "auth.register",
+      "Created an account"
+    );
 
     // Welcome + email verification link — fire and forget, never blocks
     // the registration. Unverified accounts deactivate after 7 days, and

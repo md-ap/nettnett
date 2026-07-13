@@ -3,6 +3,7 @@ import { requireRole, canUpload } from "@/lib/auth";
 import { deleteItem, isValidTitleFolder } from "@/lib/b2";
 import { deleteFromInternetArchive } from "@/lib/internet-archive";
 import { triggerNasDelete } from "@/lib/nas-webhook";
+import { logActivity, actorFromSession } from "@/lib/activity-log";
 import pool from "@/lib/db";
 
 export async function DELETE(request: NextRequest) {
@@ -49,6 +50,12 @@ export async function DELETE(request: NextRequest) {
     } catch (dbErr) {
       console.error("Failed to delete item from DB:", dbErr);
     }
+
+    await logActivity(
+      actorFromSession(auth.session),
+      "file.delete",
+      `Deleted item "${titleFolder}"`
+    );
 
     return NextResponse.json({ message: "Item deleted successfully" });
   } catch (error) {

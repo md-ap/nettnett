@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireRole, isAdmin } from "@/lib/auth";
+import { logActivity, actorFromSession } from "@/lib/activity-log";
 
 // Admin toggles a user's email verification manually (e.g. to activate a
 // registered user without making them click the confirmation email).
@@ -34,6 +35,12 @@ export async function PATCH(
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
+
+    await logActivity(
+      actorFromSession(auth.session),
+      "admin.verify_toggle",
+      `Marked ${result.rows[0].email} as ${verified ? "verified" : "unverified"}`
+    );
 
     return NextResponse.json({
       message: "Verification updated",

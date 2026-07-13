@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import pool from "@/lib/db";
 import { requireRole, isAdmin } from "@/lib/auth";
+import { logActivity, actorFromSession } from "@/lib/activity-log";
 
 export async function PATCH(
   request: NextRequest,
@@ -31,6 +32,12 @@ export async function PATCH(
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
+
+    await logActivity(
+      actorFromSession(auth.session),
+      "admin.password_change",
+      `Reset password for ${result.rows[0].email}`
+    );
 
     return NextResponse.json({ message: "Password updated successfully" });
   } catch (error) {
