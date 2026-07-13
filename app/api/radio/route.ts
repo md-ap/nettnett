@@ -92,9 +92,9 @@ export async function POST(request: NextRequest) {
 
     // URL Broadcast: orchestrated multi-step actions (validated flow):
     // remote_url playlists do NOT enter the AutoDJ rotation queue — they only
-    // play via schedule. Start = schedule NOW + interrupt + reload.
-    // Stop = unschedule alone is NOT enough (the remote stream holds the air);
-    // the playlist must also be disabled, then reload.
+    // play via schedule. Start = fresh playlist + schedule NOW + interrupt +
+    // reload. Stop = DELETE the playlist + reload (see handleStopBroadcastUrl
+    // for why disabling is not enough).
     if (action === "broadcast-url") {
       try {
         return await handleBroadcastUrl(body);
@@ -494,22 +494,27 @@ async function handleBroadcastUrl(body: { url?: string; durationMinutes?: number
   }
   duration = Math.min(Math.max(duration, 5), 360);
 
-  // 1. Find or create the dedicated remote playlist
-  let playlist = await findBroadcastPlaylist();
-  if (!playlist) {
-    playlist = await azuracast<AzPlaylist>(`/api/station/${STATION_ID}/playlists`, {
-      method: "POST",
-      body: JSON.stringify({
-        name: BROADCAST_PLAYLIST_NAME,
-        source: "remote_url",
-        remote_url: url,
-        remote_type: "stream",
-        type: "default",
-        order: "sequential",
-        is_enabled: true,
-      }),
-    });
+  // 1. Recreate the dedicated remote playlist from scratch. IMPORTANT: a
+  // stale remote playlist (even disabled) with no schedule gets baked into
+  // the Liquidsoap config as an always-available mksafe(input.http(...))
+  // source and hijacks the rotation after a station restart — so we always
+  // delete any previous instance and create a fresh one.
+  const existing = await findBroadcastPlaylist();
+  if (existing) {
+    await azuracast(`/api/station/${STATION_ID}/playlist/${existing.id}`, { method: "DELETE" });
   }
+  const playlist = await azuracast<AzPlaylist>(`/api/station/${STATION_ID}/playlists`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: BROADCAST_PLAYLIST_NAME,
+      source: "remote_url",
+      remote_url: url,
+      remote_type: "stream",
+      type: "default",
+      order: "sequential",
+      is_enabled: true,
+    }),
+  });
 
   // 2. Schedule window "now" in the STATION's timezone (not the server's)
   const station = await azuracast<{ timezone?: string }>(`/api/station/${STATION_ID}`);
@@ -517,11 +522,10 @@ async function handleBroadcastUrl(body: { url?: string; durationMinutes?: number
   const start = scheduleParts(new Date(Date.now() - 2 * 60 * 1000), tz);
   const end = scheduleParts(new Date(Date.now() + duration * 60 * 1000), tz);
 
-  // 3. Point the playlist at the URL and schedule it with interrupt
+  // 3. Schedule it NOW with interrupt (created enabled, so no toggle needed)
   await azuracast(`/api/station/${STATION_ID}/playlist/${playlist.id}`, {
     method: "PUT",
     body: JSON.stringify({
-      remote_url: url,
       schedule_items: [
         { start_time: start.timeInt, end_time: end.timeInt, days: [start.isoDay] },
       ],
@@ -529,13 +533,7 @@ async function handleBroadcastUrl(body: { url?: string; durationMinutes?: number
     }),
   });
 
-  // 4. Ensure it's enabled (toggle is the reliable enable/disable endpoint)
-  const detail = await azuracast<AzPlaylist>(`/api/station/${STATION_ID}/playlist/${playlist.id}`);
-  if (!detail.is_enabled) {
-    await azuracast(`/api/station/${STATION_ID}/playlist/${playlist.id}/toggle`, { method: "PUT" });
-  }
-
-  // 5. Reload so Liquidsoap picks up the new schedule (takes ~30s to switch)
+  // 4. Reload so Liquidsoap picks up the new schedule (takes ~30s to switch)
   await azuracast(`/api/station/${STATION_ID}/reload`, { method: "POST" });
 
   return NextResponse.json({
@@ -714,14 +712,12 @@ async function handleStopBroadcastUrl() {
     return NextResponse.json({ success: true, message: "No URL broadcast playlist exists" });
   }
 
-  // Unschedule AND disable — the remote stream won't release the air otherwise
-  await azuracast(`/api/station/${STATION_ID}/playlist/${playlist.id}`, {
-    method: "PUT",
-    body: JSON.stringify({ schedule_items: [] }),
-  });
-  if (playlist.is_enabled) {
-    await azuracast(`/api/station/${STATION_ID}/playlist/${playlist.id}/toggle`, { method: "PUT" });
-  }
+  // DELETE the playlist outright. Disabling/unscheduling is NOT enough: a
+  // schedule-less remote playlist stays in the generated Liquidsoap config
+  // as an always-available mksafe(input.http(...)) source, and hijacks the
+  // rotation (with empty metadata, which also wedges the nowplaying worker)
+  // after the next station restart. broadcast-url recreates it on demand.
+  await azuracast(`/api/station/${STATION_ID}/playlist/${playlist.id}`, { method: "DELETE" });
   await azuracast(`/api/station/${STATION_ID}/reload`, { method: "POST" });
 
   return NextResponse.json({ success: true });
