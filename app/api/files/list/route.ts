@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { requireRole, canUpload } from "@/lib/auth";
 import { listUserItems } from "@/lib/b2";
 
 export async function GET() {
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const auth = await requireRole(canUpload, {
+      forbiddenMessage: "Your account does not have upload permissions yet",
+    });
+    if (auth instanceof NextResponse) return auth;
 
-    const items = await listUserItems(session.firstName, session.lastName);
+    const items = await listUserItems(auth.b2Folder);
 
     return NextResponse.json({ items });
   } catch (error) {

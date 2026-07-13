@@ -4,6 +4,7 @@ import crypto from "crypto";
 import pool from "@/lib/db";
 import { signToken, createSessionCookie, hashToken } from "@/lib/auth";
 import { createUserFolder } from "@/lib/b2";
+import { allocateB2Folder } from "@/lib/user-folder";
 import { sendVerificationEmail } from "@/lib/email";
 import { verifyTurnstile } from "@/lib/turnstile";
 
@@ -47,17 +48,35 @@ export async function POST(request: NextRequest) {
 
     const passwordHash = await bcrypt.hash(password, 12);
 
-    const result = await pool.query(
-      `INSERT INTO public.users (email, first_name, last_name, password_hash, role)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, email, first_name, last_name, role`,
-      [email.toLowerCase(), firstName, lastName, passwordHash, "user"]
-    );
+    // Unique per-user B2 folder (name-derived, suffixed on collision) —
+    // stored once; never recomputed from the (non-unique) name again.
+    let b2Folder = await allocateB2Folder(firstName, lastName);
+    const insertUser = (folder: string) =>
+      pool.query(
+        `INSERT INTO public.users (email, first_name, last_name, password_hash, role, b2_folder)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, email, first_name, last_name, role`,
+        [email.toLowerCase(), firstName, lastName, passwordHash, "user", folder]
+      );
+
+    let result;
+    try {
+      result = await insertUser(b2Folder);
+    } catch (e) {
+      const err = e as { code?: string; constraint?: string };
+      // Same-name allocation race: re-allocate (now suffixed) and retry once
+      if (err.code === "23505" && err.constraint === "idx_users_b2_folder") {
+        b2Folder = await allocateB2Folder(firstName, lastName);
+        result = await insertUser(b2Folder);
+      } else {
+        throw e;
+      }
+    }
 
     const user = result.rows[0];
 
     // Create user folder in Backblaze B2
-    await createUserFolder(firstName, lastName);
+    await createUserFolder(b2Folder);
 
     // Welcome + email verification link — fire and forget, never blocks
     // the registration. Unverified accounts deactivate after 7 days.

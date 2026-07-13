@@ -1,22 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUserFolder, saveMetadata } from "@/lib/b2";
-import { getSession, canUpload, getDbRole } from "@/lib/auth";
+import { saveMetadata } from "@/lib/b2";
+import { requireRole, canUpload } from "@/lib/auth";
 import { sanitizeIdentifier } from "@/lib/internet-archive";
 import { triggerNasSync, triggerNasIaUpload } from "@/lib/nas-webhook";
 import pool from "@/lib/db";
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (!canUpload(await getDbRole(session.userId, session.role))) {
-      return NextResponse.json(
-        { error: "Your account does not have upload permissions yet" },
-        { status: 403 }
-      );
-    }
+    const auth = await requireRole(canUpload, {
+      forbiddenMessage: "Your account does not have upload permissions yet",
+    });
+    if (auth instanceof NextResponse) return auth;
 
     const {
       title,
@@ -38,7 +32,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const userFolder = getUserFolder(session.firstName, session.lastName);
+    const userFolder = auth.b2Folder;
 
     const subjects = subjectRaw
       ? subjectRaw.split(",").map((s: string) => s.trim()).filter(Boolean)
@@ -87,7 +81,7 @@ export async function POST(request: NextRequest) {
            ia_url = EXCLUDED.ia_url,
            updated_at = NOW()`,
         [
-          session.email,
+          auth.session.email,
           titleFolder,
           title,
           description,

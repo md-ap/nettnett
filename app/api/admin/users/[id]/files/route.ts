@@ -1,22 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { getSession } from "@/lib/auth";
-import { listUserItems } from "@/lib/b2";
+import { requireRole, isAdmin } from "@/lib/auth";
+import { listUserItems, getUserFolder } from "@/lib/b2";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireRole(isAdmin);
+    if (auth instanceof NextResponse) return auth;
 
     const { id: userId } = await params;
 
     const userResult = await pool.query(
-      "SELECT first_name, last_name, email FROM public.users WHERE id = $1",
+      "SELECT first_name, last_name, email, b2_folder FROM public.users WHERE id = $1",
       [userId]
     );
 
@@ -26,7 +24,9 @@ export async function GET(
 
     const user = userResult.rows[0];
 
-    const items = await listUserItems(user.first_name, user.last_name);
+    const items = await listUserItems(
+      user.b2_folder || getUserFolder(user.first_name, user.last_name)
+    );
 
     return NextResponse.json({
       user: {

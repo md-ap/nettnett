@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
 import { sendAccessRequestEmail } from "@/lib/email";
 
 const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || "quetelapongo@proton.me";
@@ -8,12 +8,12 @@ const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || "quetelapongo@proto
 // Sends a notification email to the admin inbox.
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const auth = await requireRole("authenticated");
+    if (auth instanceof NextResponse) return auth;
+    const session = auth.session;
 
-    if (session.role !== "user") {
+    // Fresh role: someone already granted a role shouldn't re-request
+    if (auth.role !== "user") {
       return NextResponse.json(
         { error: "Your account already has permissions" },
         { status: 400 }

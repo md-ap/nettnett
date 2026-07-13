@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, canUpload, getDbRole } from "@/lib/auth";
-import { getUserFolder, saveMetadata, s3Client, BUCKET_NAME } from "@/lib/b2";
+import { requireRole, canUpload } from "@/lib/auth";
+import { saveMetadata, s3Client, BUCKET_NAME } from "@/lib/b2";
 import { sanitizeIdentifier } from "@/lib/internet-archive";
 import { triggerNasIaUpload } from "@/lib/nas-webhook";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -8,16 +8,10 @@ import pool from "@/lib/db";
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (!canUpload(await getDbRole(session.userId, session.role))) {
-      return NextResponse.json(
-        { error: "Your account does not have upload permissions yet" },
-        { status: 403 }
-      );
-    }
+    const auth = await requireRole(canUpload, {
+      forbiddenMessage: "Your account does not have upload permissions yet",
+    });
+    if (auth instanceof NextResponse) return auth;
 
     const { folder } = await request.json();
 
@@ -28,7 +22,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const userFolder = getUserFolder(session.firstName, session.lastName);
+    const userFolder = auth.b2Folder;
 
     // 1. Read existing metadata.json from B2
     let existingMetadata: Record<string, unknown> = {};
@@ -83,7 +77,7 @@ export async function POST(request: NextRequest) {
         `UPDATE public.items
          SET ia_identifier = $1, ia_url = $2, updated_at = NOW()
          WHERE user_id = (SELECT id FROM public.users WHERE email = $3) AND folder = $4`,
-        [iaIdentifier, iaUrl, session.email, folder]
+        [iaIdentifier, iaUrl, auth.session.email, folder]
       );
     } catch (dbErr) {
       console.error("Failed to update IA fields in DB:", dbErr);

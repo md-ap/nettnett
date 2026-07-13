@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await pool.query(
-      "SELECT id, email, first_name, last_name, password_hash, role, can_manage, email_verified, created_at FROM public.users WHERE email = $1",
+      "SELECT id, email, first_name, last_name, password_hash, role, email_verified, created_at FROM public.users WHERE email = $1",
       [email.toLowerCase()]
     );
 

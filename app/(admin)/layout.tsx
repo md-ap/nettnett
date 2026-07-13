@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth";
-import pool from "@/lib/db";
+import { getSession, getDbRole, canManageRadio } from "@/lib/auth";
 import Navbar from "@/components/Navbar";
 
 export default async function AdminLayout({
@@ -14,24 +13,16 @@ export default async function AdminLayout({
     redirect("/login");
   }
 
-  // Fetch fresh can_manage from DB (graceful if column doesn't exist yet)
-  let canManage = false;
-  try {
-    const userResult = await pool.query(
-      "SELECT can_manage FROM public.users WHERE id = $1",
-      [session.userId]
-    );
-    canManage = userResult.rows[0]?.can_manage || false;
-  } catch {
-    // Column may not exist yet — run /api/setup to create it
-  }
+  // Fresh role from the DB so an admin's role change applies on the next
+  // navigation without re-login (JWT keeps the login-time snapshot)
+  const role = await getDbRole(session.userId, session.role);
 
   return (
     <div className="min-h-screen">
       <Navbar
         userName={`${session.firstName} ${session.lastName}`}
-        isAdmin={session.role === "admin"}
-        canManage={canManage}
+        isAdmin={role === "admin"}
+        canManage={canManageRadio(role)}
       />
       <main className="mx-auto max-w-7xl px-4 py-8">
         {children}

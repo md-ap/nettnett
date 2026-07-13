@@ -1,21 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { getSession } from "@/lib/auth";
+import { requireRole, isAdmin } from "@/lib/auth";
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireRole(isAdmin);
+    if (auth instanceof NextResponse) return auth;
 
     const { id: userId } = await params;
 
     // Prevent deleting yourself
-    if (userId === session.userId) {
+    if (userId === auth.session.userId) {
       return NextResponse.json(
         { error: "Cannot delete your own account" },
         { status: 400 }

@@ -1,18 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import pool from "@/lib/db";
-import { getSession } from "@/lib/auth";
+import { requireRole, isAdmin, canManageRadio } from "@/lib/auth";
 import { createUserFolder } from "@/lib/b2";
+import { allocateB2Folder } from "@/lib/user-folder";
 
 export async function GET() {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireRole(isAdmin);
+    if (auth instanceof NextResponse) return auth;
 
     const result = await pool.query(
-      `SELECT id, email, first_name, last_name, role, can_manage, email_verified, created_at
+      `SELECT id, email, first_name, last_name, role, email_verified, created_at
        FROM public.users
        ORDER BY created_at DESC`
     );
@@ -23,7 +22,7 @@ export async function GET() {
       firstName: row.first_name,
       lastName: row.last_name,
       role: row.role || "user",
-      canManage: row.can_manage || false,
+      canManage: canManageRadio(row.role || "user"),
       verified: row.email_verified === true,
       createdAt: row.created_at,
     }));
@@ -40,10 +39,8 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireRole(isAdmin);
+    if (auth instanceof NextResponse) return auth;
 
     const { email, firstName, lastName, password, role } = await request.json();
 
@@ -84,16 +81,32 @@ export async function POST(request: NextRequest) {
     const passwordHash = await bcrypt.hash(password, 12);
 
     // Admin-created accounts are trusted: mark them email-verified
-    const result = await pool.query(
-      `INSERT INTO public.users (email, first_name, last_name, password_hash, role, email_verified, email_verified_at)
-       VALUES ($1, $2, $3, $4, $5, true, NOW())
-       RETURNING id, email, first_name, last_name, role, created_at`,
-      [email.toLowerCase(), firstName, lastName, passwordHash, newRole]
-    );
+    let b2Folder = await allocateB2Folder(firstName, lastName);
+    const insertUser = (folder: string) =>
+      pool.query(
+        `INSERT INTO public.users (email, first_name, last_name, password_hash, role, email_verified, email_verified_at, b2_folder)
+         VALUES ($1, $2, $3, $4, $5, true, NOW(), $6)
+         RETURNING id, email, first_name, last_name, role, created_at`,
+        [email.toLowerCase(), firstName, lastName, passwordHash, newRole, folder]
+      );
+
+    let result;
+    try {
+      result = await insertUser(b2Folder);
+    } catch (e) {
+      const err = e as { code?: string; constraint?: string };
+      // Same-name allocation race: re-allocate (now suffixed) and retry once
+      if (err.code === "23505" && err.constraint === "idx_users_b2_folder") {
+        b2Folder = await allocateB2Folder(firstName, lastName);
+        result = await insertUser(b2Folder);
+      } else {
+        throw e;
+      }
+    }
 
     // Create B2 folder for new user
     try {
-      await createUserFolder(firstName, lastName);
+      await createUserFolder(b2Folder);
     } catch (b2Error) {
       console.error("B2 folder creation failed (user still created):", b2Error);
     }

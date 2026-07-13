@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { getSession } from "@/lib/auth";
+import { requireRole, isAdmin } from "@/lib/auth";
 
 // Admin toggles a user's email verification manually (e.g. to activate a
 // registered user without making them click the confirmation email).
@@ -9,10 +9,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireRole(isAdmin);
+    if (auth instanceof NextResponse) return auth;
 
     const { id: userId } = await params;
     const { verified } = await request.json();

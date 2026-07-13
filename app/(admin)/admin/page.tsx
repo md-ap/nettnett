@@ -1,4 +1,4 @@
-import { getSession } from "@/lib/auth";
+import { getSession, getDbRole } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import AdminPanel from "@/components/AdminPanel";
 
@@ -11,7 +11,9 @@ export default async function AdminPage() {
     redirect("/login");
   }
 
-  if (session.role !== "admin") {
+  // Fresh role — a demoted admin loses the page on next navigation
+  const role = await getDbRole(session.userId, session.role);
+  if (role !== "admin") {
     redirect("/dashboard");
   }
 

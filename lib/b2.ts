@@ -13,6 +13,10 @@ export const s3Client = new S3Client({
 
 export const BUCKET_NAME = process.env.B2_BUCKET_NAME!;
 
+// LEGACY name-based derivation — kept only for the b2_folder migration
+// backfill and as a fallback for rows not yet backfilled. Never use this
+// for authorization: names are not unique. Routes read users.b2_folder
+// (via requireRole) instead.
 export function getUserFolder(firstName: string, lastName: string): string {
   const clean = (s: string) =>
     s.toLowerCase().trim().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
@@ -51,8 +55,7 @@ export async function configureBucketCors(allowedOrigins: string[]) {
   );
 }
 
-export async function createUserFolder(firstName: string, lastName: string) {
-  const folder = getUserFolder(firstName, lastName);
+export async function createUserFolder(folder: string) {
   await s3Client.send(
     new PutObjectCommand({
       Bucket: BUCKET_NAME,
@@ -81,8 +84,7 @@ export interface UploadItemFile {
   lastModified: Date;
 }
 
-export async function listUserItems(firstName: string, lastName: string): Promise<UploadItem[]> {
-  const userFolder = getUserFolder(firstName, lastName);
+export async function listUserItems(userFolder: string): Promise<UploadItem[]> {
   const result = await s3Client.send(
     new ListObjectsV2Command({
       Bucket: BUCKET_NAME,

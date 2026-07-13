@@ -1,28 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { getSession } from "@/lib/auth";
+import { requireRole, canManageRadio } from "@/lib/auth";
 
 const INACTIVITY_TIMEOUT_MINUTES = 5;
 
 export async function GET() {
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check permission against DB (not JWT, for freshness).
-    // Role ladder: only 'management' and 'admin' may enter.
-    const userResult = await pool.query(
-      "SELECT role FROM public.users WHERE id = $1",
-      [session.userId]
-    );
-    const user = userResult.rows[0];
-    const hasPermission = user?.role === "admin" || user?.role === "management";
-
-    if (!hasPermission) {
-      return NextResponse.json({ hasPermission: false }, { status: 403 });
-    }
+    const auth = await requireRole(canManageRadio, {
+      forbiddenMessage: "Management access required",
+    });
+    if (auth instanceof NextResponse) return auth;
+    const session = auth.session;
 
     // Auto-expire stale sessions
     await pool.query(
@@ -65,20 +53,11 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Same role gate as GET — plain users must not touch the lock
-    const roleResult = await pool.query(
-      "SELECT role FROM public.users WHERE id = $1",
-      [session.userId]
-    );
-    const dbRole = roleResult.rows[0]?.role;
-    if (dbRole !== "admin" && dbRole !== "management") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireRole(canManageRadio, {
+      forbiddenMessage: "Management access required",
+    });
+    if (auth instanceof NextResponse) return auth;
+    const session = auth.session;
 
     const { action } = await request.json();
     const userName = `${session.firstName} ${session.lastName}`;

@@ -1,4 +1,70 @@
 import pool from "./db";
+import { getUserFolder } from "./b2";
+
+// Per-user B2 folder. The folder used to be re-derived from first/last name
+// on every request — names are NOT unique, so registering with an existing
+// user's name landed in (and fully controlled) their folder. The folder is
+// now allocated once and stored in users.b2_folder.
+// Backfill uses the EXACT same derivation as the old code, so existing
+// folders keep resolving — no B2 object is moved or renamed (AzuraCast
+// playlists reference those paths).
+export async function migrateB2Folder() {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      ALTER TABLE public.users
+      ADD COLUMN IF NOT EXISTS b2_folder VARCHAR(255);
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_b2_folder
+      ON public.users(b2_folder);
+    `);
+
+    const existing = await client.query(
+      "SELECT b2_folder FROM public.users WHERE b2_folder IS NOT NULL"
+    );
+    const taken = new Set<string>(existing.rows.map((r) => r.b2_folder));
+
+    // Oldest first: on a pre-existing name collision the older account keeps
+    // the canonical folder (its uploads most plausibly seeded it).
+    const pending = await client.query(
+      `SELECT id, first_name, last_name FROM public.users
+       WHERE b2_folder IS NULL
+       ORDER BY created_at ASC, id ASC`
+    );
+
+    for (const row of pending.rows) {
+      let folder = getUserFolder(row.first_name, row.last_name);
+      if (taken.has(folder)) {
+        // Deterministic suffix from the (unique) user id → re-runs converge.
+        const id = String(row.id).replace(/-/g, "");
+        let len = 4;
+        let candidate = `${folder}-${id.slice(0, len)}`;
+        while (taken.has(candidate) && len < id.length) {
+          len += 2;
+          candidate = `${folder}-${id.slice(0, len)}`;
+        }
+        console.warn(
+          `⚠ b2_folder collision for user ${row.id} (${folder}) — assigning ${candidate}. ` +
+            `Files already in the shared folder remain with the older account (manual triage).`
+        );
+        folder = candidate;
+      }
+      await client.query(
+        "UPDATE public.users SET b2_folder = $1 WHERE id = $2",
+        [folder, row.id]
+      );
+      taken.add(folder);
+    }
+
+    if (pending.rows.length > 0) {
+      console.log(`✓ b2_folder backfilled for ${pending.rows.length} user(s)`);
+    }
+    console.log("✓ b2_folder migration complete");
+  } finally {
+    client.release();
+  }
+}
 
 export async function migrateAddRoleColumn() {
   const client = await pool.connect();

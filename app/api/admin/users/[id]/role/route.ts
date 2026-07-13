@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { getSession } from "@/lib/auth";
+import { requireRole, isAdmin } from "@/lib/auth";
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireRole(isAdmin);
+    if (auth instanceof NextResponse) return auth;
 
     const { id: userId } = await params;
     const { role } = await request.json();
@@ -23,7 +21,7 @@ export async function PATCH(
     }
 
     // Prevent removing your own admin role
-    if (userId === session.userId && role !== "admin") {
+    if (userId === auth.session.userId && role !== "admin") {
       return NextResponse.json(
         { error: "Cannot remove your own admin privileges" },
         { status: 400 }

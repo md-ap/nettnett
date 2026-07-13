@@ -1,22 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, canUpload, getDbRole } from "@/lib/auth";
-import { getUserFolder, deleteItem } from "@/lib/b2";
+import { requireRole, canUpload } from "@/lib/auth";
+import { deleteItem } from "@/lib/b2";
 import { deleteFromInternetArchive } from "@/lib/internet-archive";
 import { triggerNasDelete } from "@/lib/nas-webhook";
 import pool from "@/lib/db";
 
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (!canUpload(await getDbRole(session.userId, session.role))) {
-      return NextResponse.json(
-        { error: "Your account does not have upload permissions yet" },
-        { status: 403 }
-      );
-    }
+    const auth = await requireRole(canUpload, {
+      forbiddenMessage: "Your account does not have upload permissions yet",
+    });
+    if (auth instanceof NextResponse) return auth;
 
     const { titleFolder, iaIdentifier, fileNames } = await request.json();
 
@@ -27,7 +21,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const userFolder = getUserFolder(session.firstName, session.lastName);
+    const userFolder = auth.b2Folder;
 
     // Delete entire item folder from B2 (all files + metadata.json)
     await deleteItem(userFolder, titleFolder);
@@ -50,7 +44,7 @@ export async function DELETE(request: NextRequest) {
     try {
       await pool.query(
         `DELETE FROM public.items WHERE user_id = (SELECT id FROM public.users WHERE email = $1) AND folder = $2`,
-        [session.email, titleFolder]
+        [auth.session.email, titleFolder]
       );
     } catch (dbErr) {
       console.error("Failed to delete item from DB:", dbErr);

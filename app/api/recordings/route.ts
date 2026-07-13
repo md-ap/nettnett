@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, canManageRadio, getDbRole } from "@/lib/auth";
+import { requireRole, canManageRadio } from "@/lib/auth";
 import {
   listRecordings,
   getRecordingPlayUrl,
@@ -15,16 +15,10 @@ export const maxDuration = 300;
 
 // GET: list live-session recordings (with presigned play URLs)
 export async function GET() {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (!canManageRadio(await getDbRole(session.userId, session.role))) {
-    return NextResponse.json(
-      { error: "Management access required" },
-      { status: 403 }
-    );
-  }
+  const auth = await requireRole(canManageRadio, {
+    forbiddenMessage: "Management access required",
+  });
+  if (auth instanceof NextResponse) return auth;
 
   try {
     const recordings = await listRecordings();
@@ -43,16 +37,10 @@ export async function GET() {
 
 // POST: actions on a recording (send-to-ia, delete)
 export async function POST(request: NextRequest) {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (!canManageRadio(await getDbRole(session.userId, session.role))) {
-    return NextResponse.json(
-      { error: "Management access required" },
-      { status: 403 }
-    );
-  }
+  const auth = await requireRole(canManageRadio, {
+    forbiddenMessage: "Management access required",
+  });
+  if (auth instanceof NextResponse) return auth;
 
   try {
     const body = await request.json();

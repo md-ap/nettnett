@@ -1,22 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, canUpload, getDbRole } from "@/lib/auth";
-import { getUserFolder, saveMetadata } from "@/lib/b2";
+import { requireRole, canUpload } from "@/lib/auth";
+import { saveMetadata } from "@/lib/b2";
 import { s3Client, BUCKET_NAME } from "@/lib/b2";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import pool from "@/lib/db";
 
 export async function PUT(request: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (!canUpload(await getDbRole(session.userId, session.role))) {
-      return NextResponse.json(
-        { error: "Your account does not have upload permissions yet" },
-        { status: 403 }
-      );
-    }
+    const auth = await requireRole(canUpload, {
+      forbiddenMessage: "Your account does not have upload permissions yet",
+    });
+    if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();
     const { folder, title, description, mediatype, creator, date, subject, language } = body;
@@ -28,7 +22,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const userFolder = getUserFolder(session.firstName, session.lastName);
+    const userFolder = auth.b2Folder;
 
     // Read existing metadata.json from B2 to preserve fields we don't edit
     // (iaIdentifier, iaUrl, uploadedFiles, createdAt)
@@ -85,7 +79,7 @@ export async function PUT(request: NextRequest) {
           date || null,
           JSON.stringify(subjects),
           language || null,
-          session.email,
+          auth.session.email,
           folder,
         ]
       );

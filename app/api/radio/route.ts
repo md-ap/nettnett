@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, canManageRadio, getDbRole } from "@/lib/auth";
+import { requireRole, canManageRadio } from "@/lib/auth";
 import { detectRemoteAudioDuration } from "@/lib/audio-duration";
 
 const AZURACAST_URL = process.env.NEXT_PUBLIC_AZURACAST_URL || "";
@@ -8,16 +8,10 @@ const STATION_ID = process.env.AZURACAST_STATION_ID || "1";
 
 // Proxy GET requests to AzuraCast API
 export async function GET(request: NextRequest) {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (!canManageRadio(await getDbRole(session.userId, session.role))) {
-    return NextResponse.json(
-      { error: "Management access required" },
-      { status: 403 }
-    );
-  }
+  const auth = await requireRole(canManageRadio, {
+    forbiddenMessage: "Management access required",
+  });
+  if (auth instanceof NextResponse) return auth;
 
   const { searchParams } = new URL(request.url);
   const endpoint = searchParams.get("endpoint") || "nowplaying";
@@ -87,16 +81,10 @@ export async function GET(request: NextRequest) {
 
 // Proxy POST/PUT/DELETE actions to AzuraCast API
 export async function POST(request: NextRequest) {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (!canManageRadio(await getDbRole(session.userId, session.role))) {
-    return NextResponse.json(
-      { error: "Management access required" },
-      { status: 403 }
-    );
-  }
+  const auth = await requireRole(canManageRadio, {
+    forbiddenMessage: "Management access required",
+  });
+  if (auth instanceof NextResponse) return auth;
 
   try {
     const body = await request.json();

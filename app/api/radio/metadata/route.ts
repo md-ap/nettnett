@@ -148,7 +148,7 @@ async function fetchMetadata(userFolder: string, titleFolder: string) {
        FROM public.items i
        JOIN public.users u ON i.user_id = u.id
        WHERE i.folder = $1
-       AND CONCAT('user_', LOWER(REPLACE(u.first_name, ' ', '_')), '_', LOWER(REPLACE(u.last_name, ' ', '_'))) = $2
+       AND u.b2_folder = $2
        LIMIT 1`,
       [titleFolder, userFolder]
     );
