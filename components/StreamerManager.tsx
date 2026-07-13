@@ -25,6 +25,7 @@ export default function StreamerManager() {
   const [liveInfo, setLiveInfo] = useState<LiveInfo>({ isLive: false, streamerName: "" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showWebDj, setShowWebDj] = useState(false);
 
   // Form state
   const [showForm, setShowForm] = useState(false);
@@ -361,50 +362,53 @@ export default function StreamerManager() {
         </div>
       )}
 
-      {/* BUTT Connection Info */}
+      {/* Live Studio (Web DJ) — broadcast live from the browser */}
       <div className="rounded border border-white/10 bg-white/5 p-4">
-        <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-white/50">
-          🎙️ BUTT Connection Info
-        </h3>
-        <div className="space-y-2 text-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-            <span className="text-white/40">Protocol</span>
-            <span className="font-mono text-white/70">Icecast</span>
-          </div>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-            <span className="text-white/40">Server</span>
-            <span className="font-mono text-white/70 text-xs break-all">
-              {AZURACAST_URL ? AZURACAST_URL.replace(/^https?:\/\//, "") : "—"}
-            </span>
-          </div>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-            <span className="text-white/40">Port</span>
-            <span className="font-mono text-white/70">8000</span>
-          </div>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-            <span className="text-white/40">Mount</span>
-            <span className="font-mono text-white/70">/radio</span>
-          </div>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-            <span className="text-white/40">Username</span>
-            <span className="font-mono text-white/70 text-xs italic">Your DJ username (from &quot;Add DJ&quot; above)</span>
-          </div>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-            <span className="text-white/40">Password</span>
-            <span className="font-mono text-white/70 text-xs italic">Your DJ password (from &quot;Add DJ&quot; above)</span>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h3 className="text-xs font-medium uppercase tracking-wider text-white/50">
+            🎙️ Live Studio
+          </h3>
+          <div className="flex items-center gap-2">
+            {AZURACAST_URL && (
+              <a
+                href={`${AZURACAST_URL}/public/nettnett/dj`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-white/40 hover:text-white/70 transition-colors"
+              >
+                Open in new tab ↗
+              </a>
+            )}
+            <button
+              onClick={() => setShowWebDj((v) => !v)}
+              className="rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20"
+            >
+              {showWebDj ? "Close studio" : "Open Live Studio"}
+            </button>
           </div>
         </div>
-        <div className="mt-4 rounded bg-white/5 border border-white/10 p-3">
-          <p className="text-[11px] text-white/40 font-medium mb-1">How it works:</p>
-          <ol className="text-[11px] text-white/30 space-y-1 list-decimal list-inside">
-            <li>Create a DJ account using the <span className="text-white/50">&quot;Add DJ&quot;</span> button above</li>
-            <li>In BUTT, enter the Server, Port, and Mount from this panel</li>
-            <li>Use the <span className="text-white/50">username and password</span> you created for the DJ account</li>
-            <li>Click &quot;Play&quot; in BUTT to start broadcasting live</li>
-          </ol>
-        </div>
+
+        {showWebDj && AZURACAST_URL ? (
+          <iframe
+            src={`${AZURACAST_URL}/public/nettnett/dj`}
+            allow="microphone; camera; autoplay; display-capture"
+            className="w-full rounded border border-white/10 bg-black"
+            style={{ height: "640px" }}
+            title="Web DJ Live Studio"
+          />
+        ) : (
+          <div className="rounded bg-white/5 border border-white/10 p-3">
+            <p className="text-[11px] text-white/40 font-medium mb-1">How it works:</p>
+            <ol className="text-[11px] text-white/30 space-y-1 list-decimal list-inside">
+              <li>Create a DJ account using the <span className="text-white/50">&quot;Add DJ&quot;</span> button above</li>
+              <li>Click <span className="text-white/50">&quot;Open Live Studio&quot;</span> and log in with that DJ username and password</li>
+              <li>Allow microphone access, then start broadcasting — no extra software needed</li>
+              <li>Your live session is recorded automatically and saved when you disconnect</li>
+            </ol>
+          </div>
+        )}
         <p className="mt-2 text-[11px] text-white/25">
-          When a DJ goes live, the auto-DJ will smoothly cross-fade to the live stream. When the DJ disconnects, the auto-DJ resumes automatically.
+          When a DJ goes live, the auto-DJ hands over to the live stream. When the DJ disconnects, the auto-DJ resumes automatically.
         </p>
       </div>
 
