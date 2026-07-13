@@ -29,7 +29,8 @@ export default async function AdminLayout({
           },
         }}
       />
-      <main className="mx-auto max-w-7xl px-4 py-8">
+      {/* pb-24 keeps page bottoms clear of the floating player */}
+      <main className="mx-auto max-w-7xl px-4 pt-8 pb-24">
         {children}
       </main>
     </div>
