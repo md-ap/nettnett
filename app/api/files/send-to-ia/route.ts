@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, canUpload } from "@/lib/auth";
-import { saveMetadata, s3Client, BUCKET_NAME } from "@/lib/b2";
+import { saveMetadata, s3Client, BUCKET_NAME, isValidTitleFolder } from "@/lib/b2";
 import { sanitizeIdentifier } from "@/lib/internet-archive";
 import { triggerNasIaUpload } from "@/lib/nas-webhook";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -15,9 +15,9 @@ export async function POST(request: NextRequest) {
 
     const { folder } = await request.json();
 
-    if (!folder) {
+    if (!isValidTitleFolder(folder)) {
       return NextResponse.json(
-        { error: "Folder is required" },
+        { error: "A valid folder is required" },
         { status: 400 }
       );
     }

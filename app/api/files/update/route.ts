@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, canUpload } from "@/lib/auth";
-import { saveMetadata } from "@/lib/b2";
+import { saveMetadata, isValidTitleFolder } from "@/lib/b2";
 import { s3Client, BUCKET_NAME } from "@/lib/b2";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import pool from "@/lib/db";
@@ -15,7 +15,7 @@ export async function PUT(request: NextRequest) {
     const body = await request.json();
     const { folder, title, description, mediatype, creator, date, subject, language } = body;
 
-    if (!folder || !title || !description) {
+    if (!isValidTitleFolder(folder) || !title || !description) {
       return NextResponse.json(
         { error: "Folder, title, and description are required" },
         { status: 400 }

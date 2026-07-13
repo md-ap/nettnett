@@ -133,6 +133,30 @@ export async function requireRole(
   return { session, role, b2Folder };
 }
 
+// Gate for the one-time setup endpoints: admins only — EXCEPT on a truly
+// fresh install (users table missing or empty), where the endpoint must
+// stay reachable to bootstrap the schema in the first place.
+export async function requireAdminOrBootstrap(): Promise<
+  AuthContext | "bootstrap" | NextResponse
+> {
+  try {
+    const { default: pool } = await import("./db");
+    const count = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM public.users"
+    );
+    if (count.rows[0]?.n === 0) return "bootstrap";
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === "42P01") return "bootstrap"; // users table doesn't exist yet
+    console.error("requireAdminOrBootstrap: DB check failed:", err);
+    return NextResponse.json(
+      { error: "Service temporarily unavailable" },
+      { status: 503 }
+    );
+  }
+  return requireRole(isAdmin);
+}
+
 export function createSessionCookie(token: string) {
   return {
     name: COOKIE_NAME,

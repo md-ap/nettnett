@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
+import { requireAdminOrBootstrap } from "@/lib/auth";
 import { configureBucketCors } from "@/lib/b2";
 
 // One-time setup: Configure CORS on B2 bucket for presigned URL uploads
-// Visit GET /api/setup-cors once after deploying
+// Visit GET /api/setup-cors once after deploying (admin-only)
 export async function GET() {
+  const gate = await requireAdminOrBootstrap();
+  if (gate instanceof NextResponse) return gate;
+
   try {
     await configureBucketCors([
       "https://nettnett.vercel.app",

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { saveMetadata } from "@/lib/b2";
+import { saveMetadata, titleToFolder, sanitizeFileName } from "@/lib/b2";
 import { requireRole, canUpload } from "@/lib/auth";
 import { sanitizeIdentifier } from "@/lib/internet-archive";
 import { triggerNasSync, triggerNasIaUpload } from "@/lib/nas-webhook";
@@ -32,6 +32,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Never trust the client folder: re-derive it from the title (the same
+    // derivation presign used) so a crafted value can't point elsewhere.
+    if (titleFolder !== titleToFolder(String(title))) {
+      return NextResponse.json(
+        { error: "titleFolder does not match title" },
+        { status: 400 }
+      );
+    }
+
+    const safeUploadedFiles = (uploadedFiles as { name?: unknown; size?: unknown }[])
+      .slice(0, 25)
+      .map((f) => ({
+        name: sanitizeFileName(String(f?.name ?? "")),
+        size: Number(f?.size) || 0,
+      }));
+
     const userFolder = auth.b2Folder;
 
     const subjects = subjectRaw
@@ -58,7 +74,7 @@ export async function POST(request: NextRequest) {
       language: language || null,
       iaIdentifier,
       iaUrl,
-      uploadedFiles,
+      uploadedFiles: safeUploadedFiles,
       createdAt: new Date().toISOString(),
     };
 

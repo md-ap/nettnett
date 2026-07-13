@@ -23,6 +23,41 @@ export function getUserFolder(firstName: string, lastName: string): string {
   return `user_${clean(firstName)}_${clean(lastName)}`;
 }
 
+// Slug used as the item folder inside the user folder.
+export function titleToFolder(title: string): string {
+  return title
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+// B2 stores keys verbatim (".." never collapses), but slashes, control
+// chars and oversized names still make hostile keys — keep a safe basename.
+export function sanitizeFileName(name: string): string {
+  const base = name.split(/[/\\]/).pop() || "";
+  let clean = Array.from(base)
+    .filter((ch) => {
+      const code = ch.charCodeAt(0);
+      return code > 31 && code !== 127; // drop control characters
+    })
+    .join("")
+    .replace(/^\.+/, "")
+    .trim();
+  if (clean.length > 180) {
+    const dot = clean.lastIndexOf(".");
+    const ext = dot > 0 && dot > clean.length - 12 ? clean.slice(dot) : "";
+    clean = clean.slice(0, 180 - ext.length) + ext;
+  }
+  return clean || "file";
+}
+
+// Client-supplied item folders (delete/update/send-to-ia can't re-derive
+// from a title) must look exactly like a titleToFolder() slug.
+export function isValidTitleFolder(folder: unknown): folder is string {
+  return typeof folder === "string" && /^[a-z0-9][a-z0-9-]{0,199}$/.test(folder);
+}
+
 export async function getPresignedUploadUrl(
   key: string,
   contentType: string,

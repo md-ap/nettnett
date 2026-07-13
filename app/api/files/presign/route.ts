@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, canUpload } from "@/lib/auth";
-import { getPresignedUploadUrl } from "@/lib/b2";
+import { getPresignedUploadUrl, titleToFolder, sanitizeFileName } from "@/lib/b2";
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,23 +17,38 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    if (typeof title !== "string" || title.length > 200) {
+      return NextResponse.json(
+        { error: "Title too long (max 200 characters)" },
+        { status: 400 }
+      );
+    }
+    if (files.length > 25) {
+      return NextResponse.json(
+        { error: "Too many files (max 25 per item)" },
+        { status: 400 }
+      );
+    }
 
     const userFolder = auth.b2Folder;
-    const titleFolder = title
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
+    const titleFolder = titleToFolder(title);
+    if (!titleFolder) {
+      return NextResponse.json(
+        { error: "Title must contain letters or numbers" },
+        { status: 400 }
+      );
+    }
 
     const presignedUrls = await Promise.all(
       files.map(async (file: { name: string; type: string; size: number }) => {
-        const key = `${userFolder}/${titleFolder}/${file.name}`;
+        const safeName = sanitizeFileName(String(file.name ?? ""));
+        const key = `${userFolder}/${titleFolder}/${safeName}`;
         const uploadUrl = await getPresignedUploadUrl(
           key,
           file.type || "application/octet-stream"
         );
         return {
-          fileName: file.name,
+          fileName: safeName,
           key,
           uploadUrl,
         };

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, canUpload } from "@/lib/auth";
-import { deleteItem } from "@/lib/b2";
+import { deleteItem, isValidTitleFolder } from "@/lib/b2";
 import { deleteFromInternetArchive } from "@/lib/internet-archive";
 import { triggerNasDelete } from "@/lib/nas-webhook";
 import pool from "@/lib/db";
@@ -14,9 +14,9 @@ export async function DELETE(request: NextRequest) {
 
     const { titleFolder, iaIdentifier, fileNames } = await request.json();
 
-    if (!titleFolder) {
+    if (!isValidTitleFolder(titleFolder)) {
       return NextResponse.json(
-        { error: "Title folder is required" },
+        { error: "A valid title folder is required" },
         { status: 400 }
       );
     }
