@@ -18,7 +18,7 @@ const PUBLIC_LINKS = [
   { href: "/program", label: "Program" },
 ];
 
-const PROTECTED_PREFIXES = ["/dashboard", "/management", "/admin"];
+const PROTECTED_PREFIXES = ["/upload", "/management", "/admin", "/account"];
 
 // Single navbar for the whole app. The admin layout passes a server-known
 // initialSession (no logged-out flash); public pages mount it bare and it
@@ -209,8 +209,8 @@ export default function Navbar({ initialSession }: { initialSession?: NavSession
                   role="menu"
                   className="absolute right-0 top-full mt-2 w-48 rounded-lg border border-white/15 bg-neutral-900 py-1 shadow-xl"
                 >
-                  <Link href="/dashboard" role="menuitem" className={menuItemClass("/dashboard")}>
-                    Dashboard
+                  <Link href="/upload" role="menuitem" className={menuItemClass("/upload")}>
+                    Upload
                   </Link>
                   {canManageRole(role) && (
                     <Link href="/management" role="menuitem" className={menuItemClass("/management")}>
@@ -222,6 +222,9 @@ export default function Navbar({ initialSession }: { initialSession?: NavSession
                       Admin
                     </Link>
                   )}
+                  <Link href="/account" role="menuitem" className={menuItemClass("/account")}>
+                    Account
+                  </Link>
                   <div className="my-1 border-t border-white/10" />
                   <button
                     role="menuitem"
@@ -269,8 +272,8 @@ export default function Navbar({ initialSession }: { initialSession?: NavSession
             {/* Member links */}
             {authenticated && (
               <div className="flex flex-col border-b border-white/10 pb-3 mb-3">
-                <Link href="/dashboard" className={mobileItemClass("/dashboard")}>
-                  Dashboard
+                <Link href="/upload" className={mobileItemClass("/upload")}>
+                  Upload
                 </Link>
                 {canManageRole(role) && (
                   <Link href="/management" className={mobileItemClass("/management")}>
@@ -282,6 +285,9 @@ export default function Navbar({ initialSession }: { initialSession?: NavSession
                     Admin
                   </Link>
                 )}
+                <Link href="/account" className={mobileItemClass("/account")}>
+                  Account
+                </Link>
               </div>
             )}
 

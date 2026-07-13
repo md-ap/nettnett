@@ -87,10 +87,10 @@ function VerifyEmailContent() {
           ✓ Your email is verified — your account is fully active.
         </div>
         <Link
-          href="/dashboard"
+          href="/upload"
           className="inline-block w-full rounded bg-white py-3 font-semibold text-black transition-opacity hover:opacity-90"
         >
-          Go to my dashboard
+          Go to my panel
         </Link>
       </div>
     );

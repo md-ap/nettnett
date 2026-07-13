@@ -12,11 +12,12 @@ NettNett is a radio streaming platform and file management system built with Nex
 - `/about`, `/curators`, `/participate`, `/program` — Public pages (route group `(public)`)
 - `/login` — Auth page (login/register, Turnstile on both)
 - `/forgot-password`, `/reset-password`, `/verify-email` — Public auth flows
-- `/dashboard` — Member panel (upload/manage files; `user` role sees an access-request notice instead)
+- `/upload` — Member panel (upload/manage files; `user` role sees an access-request notice instead). Renamed from `/dashboard` — a permanent redirect in `next.config.ts` keeps old links alive
+- `/account` — Self-service account settings (ANY logged-in role, incl. plain `user`): rename, change email (re-verify), change password, delete account
 - `/management` — Radio management (`management`/`admin` roles; exclusive-lock sessions)
 - `/admin` — User administration (admin role only)
 
-**App shell:** one unified `Navbar` everywhere (logo + public links left; logged-in users get a user dropdown with Dashboard/Management/Admin/Logout, role-gated; hamburger on mobile). The stream player is a `FloatingPlayer` pill fixed bottom-right (minimizable), mounted once in the root layout — hidden on `/` (the home IS the big player) and on the minimal auth pages. Audio survives navigation (RadioProvider in root layout).
+**App shell:** one unified `Navbar` everywhere (logo + public links left; logged-in users get a user dropdown with Upload/Management/Admin/Account/Logout, role-gated; hamburger on mobile). The stream player is a `FloatingPlayer` pill fixed bottom-right (minimizable), mounted once in the root layout — hidden on `/` (the home IS the big player) and on the minimal auth pages. Audio survives navigation (RadioProvider in root layout).
 
 ---
 
@@ -29,7 +30,7 @@ User (Browser)
   │     ├── Auth (JWT + httpOnly cookies; roles user/uploader/management/admin
   │     │        enforced FRESH from DB via requireRole — fail-closed)
   │     ├── API Routes (upload, radio proxy, recordings, admin)
-  │     ├── Dashboard / Management / Admin UI
+  │     ├── Upload / Management / Admin UI
   │     └── Native Live Studio (Webcast protocol over WebSocket)
   │
   ├── NileDB (Postgres-compatible)
@@ -70,19 +71,24 @@ User (Browser)
 nettnett/
 ├── app/
 │   ├── (public)/                    # about, curators, participate, program
-│   ├── (admin)/                     # dashboard, management, admin
+│   ├── (admin)/                     # upload (ex-dashboard), management, admin, account
 │   ├── forgot-password/ reset-password/ verify-email/   # public auth pages
 │   ├── api/
 │   │   ├── auth/                    # register, login, logout, session,
 │   │   │                            # forgot-password, reset-password,
 │   │   │                            # verify-email, resend-verification
 │   │   ├── request-access/route.ts  # "user" role requests a role (emails admin)
+│   │   ├── account/                 # Self-service (requireRole "authenticated"):
+│   │   │                            # route.ts GET/PATCH profile + DELETE account;
+│   │   │                            # email/ change + re-verify; password/ change
 │   │   ├── files/                   # presign, finalize, delete, list,
 │   │   │                            # update, send-to-ia (all canUpload-gated)
 │   │   ├── radio/
 │   │   │   ├── route.ts             # Authenticated proxy to AzuraCast API
 │   │   │   │                        # (playlists, streamers, URL broadcast actions)
 │   │   │   ├── schedule/route.ts    # Public schedule for calendar/program
+│   │   │   ├── calendar.ics/route.ts # Public iCal feed (Google/Apple/Outlook
+│   │   │   │                        # subscription; resolved AzuraCast entries)
 │   │   │   ├── metadata/route.ts    # Public track metadata enrichment
 │   │   │   └── broadcast-status/route.ts  # Public URL-broadcast status
 │   │   │                            # (time-aware: inactive once the window ends)
@@ -111,6 +117,7 @@ nettnett/
 │   ├── Navbar.tsx                   # Unified nav (optional initialSession prop;
 │   │                                # admin layout passes it, public self-fetches)
 │   ├── RequestAccess.tsx            # Access-request notice for "user" role
+│   ├── AccountSettings.tsx          # /account: rename, email/password change, delete
 │   ├── Turnstile.tsx                # Cloudflare Turnstile widget (dark)
 ├── lib/
 │   ├── db.ts / db-init.ts / auth.ts # auth.ts: requireRole (fresh-DB, fail-closed),
@@ -231,6 +238,9 @@ Live sessions auto-record to the private bucket. The tab lists them (DJ, date, e
 ### Playlists / Calendar / Streamers
 Pre-existing features: playlist CRUD + song assignment by B2 path, weekly schedule with `interrupt` (AzuraCast times are integers 900=09:00, ISO days 1=Mon..7=Sun — NOT JS days), DJ account management.
 
+### iCal feed (public)
+`GET /api/radio/calendar.ics` — subscribable calendar of the programming (the `/program` page has a "Subscribe" block: Google Calendar link, `webcal://` for Apple/Outlook, copy URL). Logic: emits the RESOLVED upcoming instances from AzuraCast `/api/station/{id}/schedule` (~2-week window via `start`/`end` params) as absolute-UTC `VEVENT`s — no RRULE/VTIMEZONE reconstruction, so DST and date-bound one-offs are handled by AzuraCast, and streamer slots are included. UID = `type-id-start_timestamp` (stable per instance → no dupes on refresh; removed events vanish on next sync). URL-broadcast playlist prefixes ("URL: ", "URL Broadcast — ") are stripped from titles. Upstream failure → 503, NOT an empty 200 (subscribers keep their last good copy). Calendar apps poll on their own cadence (Google ~12-24h — same-day changes lag; that's inherent to ICS subscriptions).
+
 ### Logs (tab)
 Audit trail of member/admin activity (`public.activity_log`, 180-day retention pruned on read). Server routes call `logActivity()` (`lib/activity-log.ts` — awaited, never throws) after successful mutations: uploads/edits/deletes/IA publishes, URL broadcasts (start/stop/schedule/delete), playlist + calendar + DJ-account changes, station actions, recordings, management-panel claims, admin user operations, registrations. Live-stream start/end is reported by the browser (LiveStudio → `POST /api/activity`, whitelisted `stream.*` actions only, since the DJ connects straight to the AzuraCast harbor). The tab lists entries with category badges, user, detail, timestamp; search + category filter + pagination.
 
@@ -241,7 +251,7 @@ Audit trail of member/admin activity (`public.activity_log`, 180-day retention p
 ### Role ladder (single `role` column; legacy `can_manage` superseded)
 | Role | Upload files | Radio management | Admin panel |
 |------|:---:|:---:|:---:|
-| `user` (default on register) | ❌ dashboard shows access-request notice + button (emails `ADMIN_NOTIFY_EMAIL`) | ❌ | ❌ |
+| `user` (default on register) | ❌ upload panel shows access-request notice + button (emails `ADMIN_NOTIFY_EMAIL`) | ❌ | ❌ |
 | `uploader` | ✅ | ❌ | ❌ |
 | `management` | ✅ | ✅ | ❌ |
 | `admin` | ✅ | ✅ | ✅ |
@@ -252,15 +262,17 @@ Audit trail of member/admin activity (`public.activity_log`, 180-day retention p
 - Files input hardening: presign re-derives `titleToFolder(title)` and sanitizes file names (basename, control chars stripped, 180-char cap, ≤25 files); finalize 400s if the client `titleFolder` mismatches; delete/update/send-to-ia validate the folder slug shape.
 - One-shot migrations tracked in `public.migration_log` (e.g. `roles_overhaul`: can_manage→management, old plain users→uploader). The `can_manage` column still exists but no code reads it.
 - Admin panel: Role dropdown per user, Verified yes/no toggle, Add User modal picks a role (admin-created users are auto-verified); mobile shows cards instead of the table.
+- **Self-service `/account` (`/api/account`, gated `requireRole("authenticated")` — every role):** rename (JWT cookie re-signed with the new identity claims; `b2_folder` untouched), change email + change password (both require the current password; sensitive changes send Resend notices), delete account (password-confirmed; blocks the super admin and the LAST admin; DB rows cascade, activity_log keeps entries with `user_id=NULL`, **B2 files stay** — they may be in radio playlists). Actions logged as `auth.profile_update` / `auth.email_change` / `auth.password_change` / `auth.account_delete`.
 
 ### Email verification
 - Registration sends a combined welcome+verify email (7-day token, `public.email_verification_tokens` — matches the copy and the grace period); the account works immediately but **deactivates after a 7-day grace period** if unverified (login returns 403 + `needsVerification` flag → link to `/verify-email`, which verifies from the token or resends the link).
 - Emailed links are built from `APP_URL` (`lib/app-url.ts`), never from the request Host header (host-spoofing would redirect valid tokens to an attacker domain).
 - Admins can verify/unverify manually from the admin panel (`PATCH /api/admin/users/[id]/verify`).
 - Existing users were grandfathered as verified.
+- **Email change re-verifies:** `/api/account/email` flips `email_verified=false`, burns old verification tokens, mails a fresh link to the NEW inbox + a security notice to the OLD one. The 7-day deactivation clock re-anchors on `users.email_changed_at` (login checks `email_changed_at ?? created_at` — without that anchor, any account older than 7 days would deactivate the moment it changed email). Login tolerates the column missing (42703 fallback) for the deploy-before-setup window.
 
 ### Transactional email (Resend)
-- `lib/email.ts` — Resend via plain REST; branded dark layout ("nnr" wordmark, Helvetica, Spanish copy). Templates: welcome+verify, password reset, access request notification.
+- `lib/email.ts` — Resend via plain REST; branded dark layout ("nnr" wordmark, Helvetica, Spanish copy). Templates: welcome+verify, password reset, access request notification, email-changed notice (to the old address), password-changed notice, account-deleted notice.
 - **Sandbox limitation:** with the `onboarding@resend.dev` sender, Resend only delivers to the Resend account owner's email. Real delivery to all users requires verifying the future domain (`nettnettradio.com`) in Resend, then updating `EMAIL_FROM`.
 - Password reset: `/forgot-password` → SHA-256-hashed token (1h, `public.password_reset_tokens`) → `/reset-password?token=`. Anti-enumeration on both forgot and resend endpoints.
 
@@ -275,7 +287,7 @@ Audit trail of member/admin activity (`public.activity_log`, 180-day retention p
 
 ### NileDB (PostgreSQL)
 - SSL required; **always use explicit `public.` schema** (NileDB has a built-in `users` table in its own schema)
-- Tables: `public.users` (+ `role`, `email_verified`, `b2_folder` UNIQUE columns), `public.items`, `public.management_sessions`, `public.activity_log`, `public.password_reset_tokens`, `public.email_verification_tokens`, `public.migration_log`, legacy `public.files` (no longer created or read)
+- Tables: `public.users` (+ `role`, `email_verified`, `email_changed_at`, `b2_folder` UNIQUE columns), `public.items`, `public.management_sessions`, `public.activity_log`, `public.password_reset_tokens`, `public.email_verification_tokens`, `public.migration_log`, legacy `public.files` (no longer created or read)
 - Setup/migrations: `GET /api/setup` (idempotent; **admin-gated** — open only on a fresh install with no users)
 - ⚠️ **Local `.env.local` and Vercel point at the SAME database** — migrations run locally are live in production immediately
 
@@ -283,7 +295,7 @@ Audit trail of member/admin activity (`public.activity_log`, 180-day retention p
 - SDK: `@aws-sdk/client-s3` with `forcePathStyle: true` (required for B2)
 - `nettnett1` (public): browser uploads via presigned PUT URLs (`/api/files/presign` → direct upload → `/api/files/finalize`), bypassing Vercel's 4.5MB limit. Public URL: `https://f004.backblazeb2.com/file/nettnett1/{key}`
 - `nettnett-recordings` (private): AzuraCast writes; app reads via presigned GETs
-- File listing for the dashboard comes from B2 directly (`listUserItems(auth.b2Folder)`), not the DB
+- File listing for the upload panel comes from B2 directly (`listUserItems(auth.b2Folder)`), not the DB
 
 ### Internet Archive
 - S3-like API at `s3.us.archive.org`, `Authorization: LOW key:secret`

@@ -218,9 +218,9 @@ export default function ManagementGate({ children }: { children: ReactNode }) {
     };
   }, [releaseSession]);
 
-  // Go back to dashboard
+  // Go back to the upload panel
   function goBack() {
-    router.push("/dashboard");
+    router.push("/upload");
   }
 
   // Loading state
@@ -246,7 +246,7 @@ export default function ManagementGate({ children }: { children: ReactNode }) {
             onClick={goBack}
             className="rounded border border-white/20 px-6 py-2 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white"
           >
-            Back to Dashboard
+            Back to Upload
           </button>
         </div>
       </div>

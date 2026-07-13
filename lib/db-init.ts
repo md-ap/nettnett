@@ -285,6 +285,23 @@ export async function migrateEmailVerification() {
   }
 }
 
+// Self-service email change (/api/account/email): the 7-day verification
+// grace period must restart at the change. Login anchors the deactivation
+// check on email_changed_at ?? created_at — without this, any account older
+// than 7 days would deactivate the moment it changed its email.
+export async function migrateEmailChangedAt() {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      ALTER TABLE public.users
+      ADD COLUMN IF NOT EXISTS email_changed_at TIMESTAMP WITH TIME ZONE;
+    `);
+    console.log("✓ email_changed_at migration complete");
+  } finally {
+    client.release();
+  }
+}
+
 export async function initializeDatabase() {
   const client = await pool.connect();
   try {

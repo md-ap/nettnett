@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-// Shown in the dashboard to plain "user" accounts (no permissions yet):
+// Shown in the upload panel (/upload) to plain "user" accounts (no permissions yet):
 // a notice + button that emails the admins requesting a role.
 export default function RequestAccess({ firstName }: { firstName: string }) {
   const [sent, setSent] = useState(false);

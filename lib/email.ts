@@ -201,3 +201,78 @@ export async function sendPasswordResetEmail(
     }),
   });
 }
+
+// ─── Account self-service notices (/account) ────────────────────
+
+// Security notice to the PREVIOUS address after a self-service email change.
+// The old inbox can no longer password-reset (lookup is by the new email),
+// so the actionable path if it wasn't them is contacting an admin.
+export async function sendEmailChangedNotice(
+  to: string,
+  firstName: string,
+  newEmail: string
+): Promise<boolean> {
+  return sendEmail({
+    to,
+    subject: "El correo de tu cuenta cambió — NettNett Radio",
+    html: emailLayout({
+      heading: `Hola ${firstName}`,
+      bodyHtml: `
+        <p style="margin: 0 0 12px 0;">
+          El correo de tu cuenta de NettNett Radio cambió a
+          <strong style="color:#ffffff;">${newEmail}</strong>.
+          Esta dirección deja de recibir los mensajes de tu cuenta.
+        </p>
+        <p style="margin: 0 0 12px 0;">
+          Si tú no hiciste este cambio, contacta a un admin de inmediato.
+        </p>`,
+    }),
+  });
+}
+
+// Security notice after a self-service password change.
+export async function sendPasswordChangedNotice(
+  to: string,
+  firstName: string,
+  forgotPasswordUrl: string
+): Promise<boolean> {
+  return sendEmail({
+    to,
+    subject: "Tu contraseña cambió — NettNett Radio",
+    html: emailLayout({
+      heading: `Hola ${firstName}`,
+      bodyHtml: `
+        <p style="margin: 0 0 12px 0;">
+          La contraseña de tu cuenta de NettNett Radio acaba de cambiar.
+          Si fuiste tú, no necesitas hacer nada.
+        </p>
+        <p style="margin: 0 0 12px 0;">
+          Si no reconoces este cambio, restablece tu contraseña de inmediato.
+        </p>`,
+      ctaText: "Restablecer contraseña",
+      ctaUrl: forgotPasswordUrl,
+    }),
+  });
+}
+
+// Goodbye notice after a self-service account deletion.
+export async function sendAccountDeletedNotice(
+  to: string,
+  firstName: string
+): Promise<boolean> {
+  return sendEmail({
+    to,
+    subject: "Tu cuenta fue eliminada — NettNett Radio",
+    html: emailLayout({
+      heading: `Hasta pronto, ${firstName}`,
+      bodyHtml: `
+        <p style="margin: 0 0 12px 0;">
+          Tu cuenta de NettNett Radio fue eliminada. Gracias por haber sido
+          parte del proyecto — la radio sigue sonando para ti.
+        </p>
+        <p style="margin: 0 0 12px 0;">
+          Si tú no solicitaste esta eliminación, contacta a un admin de inmediato.
+        </p>`,
+    }),
+  });
+}

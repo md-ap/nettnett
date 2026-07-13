@@ -3,17 +3,18 @@ import { NextRequest, NextResponse } from "next/server";
 export function middleware(request: NextRequest) {
   const token = request.cookies.get("nettnett_session")?.value;
   const isLoginPage = request.nextUrl.pathname === "/login";
-  const isDashboard = request.nextUrl.pathname.startsWith("/dashboard");
+  const isUpload = request.nextUrl.pathname.startsWith("/upload");
   const isManagement = request.nextUrl.pathname.startsWith("/management");
   const isAdmin = request.nextUrl.pathname.startsWith("/admin");
+  const isAccount = request.nextUrl.pathname.startsWith("/account");
 
-  // Logged-in users visiting /login → redirect to /dashboard
+  // Logged-in users visiting /login → redirect to /upload
   if (isLoginPage && token) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    return NextResponse.redirect(new URL("/upload", request.url));
   }
 
   // Unauthenticated users visiting protected routes → redirect to /login
-  if ((isDashboard || isManagement || isAdmin) && !token) {
+  if ((isUpload || isManagement || isAdmin || isAccount) && !token) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
@@ -21,5 +22,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/login", "/dashboard/:path*", "/management/:path*", "/admin/:path*"],
+  matcher: ["/login", "/upload/:path*", "/management/:path*", "/admin/:path*", "/account/:path*"],
 };

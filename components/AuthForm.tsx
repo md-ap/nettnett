@@ -54,7 +54,7 @@ export default function AuthForm() {
         return;
       }
 
-      router.push("/dashboard");
+      router.push("/upload");
     } catch {
       setError("Network error. Please try again.");
       resetTurnstile();

@@ -13,7 +13,7 @@ export default async function ManagementPage() {
   // management and admin may enter; the APIs enforce this again)
   const role = await getDbRole(session.userId, session.role);
   if (!canManageRadio(role)) {
-    redirect("/dashboard");
+    redirect("/upload");
   }
 
   return (

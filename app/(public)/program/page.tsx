@@ -59,6 +59,8 @@ export default function ProgramPage() {
   const [selectedDay, setSelectedDay] = useState(new Date().getDay());
   const [viewMode, setViewMode] = useState<"week" | "day">("day");
   const [currentWeekStart, setCurrentWeekStart] = useState(() => getWeekStart(new Date()));
+  const [feedUrl, setFeedUrl] = useState(""); // set client-side (needs window)
+  const [copied, setCopied] = useState(false);
 
   const fetchSchedule = useCallback(async () => {
     try {
@@ -78,6 +80,26 @@ export default function ProgramPage() {
     const interval = setInterval(fetchSchedule, 60000);
     return () => clearInterval(interval);
   }, [fetchSchedule]);
+
+  // iCal subscription URL (public /api/radio/calendar.ics feed)
+  useEffect(() => {
+    setFeedUrl(`${window.location.origin}/api/radio/calendar.ics`);
+  }, []);
+
+  const webcalUrl = feedUrl.replace(/^https?:\/\//, "webcal://");
+  const googleCalUrl = feedUrl
+    ? `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(webcalUrl)}`
+    : "";
+
+  function copyFeedUrl() {
+    navigator.clipboard
+      .writeText(feedUrl)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {});
+  }
 
   const today = new Date();
   const todayDay = today.getDay();
@@ -534,6 +556,44 @@ export default function ProgramPage() {
             );
           }
         })()
+      )}
+
+      {/* Calendar subscription */}
+      {feedUrl && (
+        <div className="mt-10 rounded-lg border border-white/10 bg-white/5 p-4 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-white">
+                📅 Subscribe to this schedule
+              </p>
+              <p className="mt-0.5 text-xs text-white/40">
+                Adds the program to your calendar app and keeps it in sync.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <a
+                href={googleCalUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded border border-white/20 px-3 py-1.5 text-xs text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                Google Calendar
+              </a>
+              <a
+                href={webcalUrl}
+                className="rounded border border-white/20 px-3 py-1.5 text-xs text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                Apple / Outlook
+              </a>
+              <button
+                onClick={copyFeedUrl}
+                className="rounded border border-white/20 px-3 py-1.5 text-xs text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                {copied ? "✓ Copied" : "Copy URL"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Footer info */}

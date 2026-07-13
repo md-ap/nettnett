@@ -14,7 +14,7 @@ export default async function AdminPage() {
   // Fresh role — a demoted admin loses the page on next navigation
   const role = await getDbRole(session.userId, session.role);
   if (role !== "admin") {
-    redirect("/dashboard");
+    redirect("/upload");
   }
 
   return <AdminPanel />;
