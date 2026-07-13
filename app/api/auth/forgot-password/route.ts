@@ -3,6 +3,7 @@ import crypto from "crypto";
 import pool from "@/lib/db";
 import { hashToken } from "@/lib/auth";
 import { sendPasswordResetEmail } from "@/lib/email";
+import { getAppUrl } from "@/lib/app-url";
 import { verifyTurnstile } from "@/lib/turnstile";
 
 export async function POST(request: NextRequest) {
@@ -45,8 +46,7 @@ export async function POST(request: NextRequest) {
       [user.id, tokenHash]
     );
 
-    const origin = new URL(request.url).origin;
-    const resetUrl = `${origin}/reset-password?token=${token}`;
+    const resetUrl = `${getAppUrl(request)}/reset-password?token=${token}`;
 
     // Don't leak email-sending failures to the response either
     sendPasswordResetEmail(email.toLowerCase().trim(), user.first_name, resetUrl).catch(

@@ -7,6 +7,7 @@ import { createUserFolder } from "@/lib/b2";
 import { allocateB2Folder } from "@/lib/user-folder";
 import { sendVerificationEmail } from "@/lib/email";
 import { verifyTurnstile } from "@/lib/turnstile";
+import { getAppUrl } from "@/lib/app-url";
 
 export async function POST(request: NextRequest) {
   try {
@@ -79,14 +80,15 @@ export async function POST(request: NextRequest) {
     await createUserFolder(b2Folder);
 
     // Welcome + email verification link — fire and forget, never blocks
-    // the registration. Unverified accounts deactivate after 7 days.
-    const appUrl = new URL(request.url).origin;
+    // the registration. Unverified accounts deactivate after 7 days, and
+    // the token lives just as long (matches the email copy).
+    const appUrl = getAppUrl(request);
     (async () => {
       const verifyToken = crypto.randomBytes(32).toString("hex");
       const tokenHash = hashToken(verifyToken);
       await pool.query(
         `INSERT INTO public.email_verification_tokens (user_id, token_hash, expires_at)
-         VALUES ($1, $2, NOW() + INTERVAL '48 hours')`,
+         VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
         [user.id, tokenHash]
       );
       await sendVerificationEmail(

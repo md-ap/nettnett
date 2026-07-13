@@ -14,10 +14,19 @@ export default function AuthForm() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [turnstileToken, setTurnstileToken] = useState("");
+  // Turnstile tokens are single-use: bump the key after a failed submit so
+  // the widget remounts and issues a fresh token
+  const [turnstileKey, setTurnstileKey] = useState(0);
   const [error, setError] = useState("");
   const [needsVerification, setNeedsVerification] = useState(false);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+  function resetTurnstile() {
+    if (!TURNSTILE_ENABLED) return;
+    setTurnstileToken("");
+    setTurnstileKey((k) => k + 1);
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -27,7 +36,7 @@ export default function AuthForm() {
     try {
       const endpoint = isLogin ? "/api/auth/login" : "/api/auth/register";
       const body = isLogin
-        ? { email, password }
+        ? { email, password, turnstileToken }
         : { email, password, firstName, lastName, turnstileToken };
 
       const res = await fetch(endpoint, {
@@ -41,12 +50,14 @@ export default function AuthForm() {
       if (!res.ok) {
         setError(data.error || "Something went wrong");
         setNeedsVerification(!!data.needsVerification);
+        resetTurnstile();
         return;
       }
 
       router.push("/dashboard");
     } catch {
       setError("Network error. Please try again.");
+      resetTurnstile();
     } finally {
       setLoading(false);
     }
@@ -109,10 +120,10 @@ export default function AuthForm() {
           minLength={6}
           className="w-full rounded border border-white/20 bg-white/5 px-4 py-3 text-white placeholder-white/40 outline-none focus:border-white/50"
         />
-        {!isLogin && <Turnstile onToken={setTurnstileToken} />}
+        <Turnstile key={turnstileKey} onToken={setTurnstileToken} />
         <button
           type="submit"
-          disabled={loading || (!isLogin && TURNSTILE_ENABLED && !turnstileToken)}
+          disabled={loading || (TURNSTILE_ENABLED && !turnstileToken)}
           className="w-full rounded bg-white py-3 font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {loading ? "Loading..." : isLogin ? "Sign In" : "Register"}

@@ -2,14 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import pool from "@/lib/db";
 import { signToken, createSessionCookie } from "@/lib/auth";
+import { verifyTurnstile } from "@/lib/turnstile";
 
 export async function POST(request: NextRequest) {
   try {
-    const { email, password } = await request.json();
+    const { email, password, turnstileToken } = await request.json();
 
     if (!email || !password) {
       return NextResponse.json(
         { error: "Email and password are required" },
+        { status: 400 }
+      );
+    }
+
+    // Anti-bot / brute-force friction (no-op when keys are unset in dev)
+    const turnstileOk = await verifyTurnstile(turnstileToken);
+    if (!turnstileOk) {
+      return NextResponse.json(
+        { error: "Verification failed — please try again" },
         { status: 400 }
       );
     }

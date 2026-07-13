@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth";
 import { sendAccessRequestEmail } from "@/lib/email";
+import { getAppUrl } from "@/lib/app-url";
 
 const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || "quetelapongo@proton.me";
 
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const appUrl = new URL(request.url).origin;
+    const appUrl = getAppUrl(request);
     const ok = await sendAccessRequestEmail(
       ADMIN_NOTIFY_EMAIL,
       `${session.firstName} ${session.lastName}`,

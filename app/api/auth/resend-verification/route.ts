@@ -3,6 +3,7 @@ import crypto from "crypto";
 import pool from "@/lib/db";
 import { hashToken } from "@/lib/auth";
 import { sendVerificationEmail } from "@/lib/email";
+import { getAppUrl } from "@/lib/app-url";
 import { verifyTurnstile } from "@/lib/turnstile";
 
 export async function POST(request: NextRequest) {
@@ -39,15 +40,14 @@ export async function POST(request: NextRequest) {
 
     await pool.query(
       `INSERT INTO public.email_verification_tokens (user_id, token_hash, expires_at)
-       VALUES ($1, $2, NOW() + INTERVAL '48 hours')`,
+       VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
       [user.id, tokenHash]
     );
 
-    const origin = new URL(request.url).origin;
     sendVerificationEmail(
       email.toLowerCase().trim(),
       user.first_name,
-      `${origin}/verify-email?token=${token}`,
+      `${getAppUrl(request)}/verify-email?token=${token}`,
       false
     ).catch((e) => console.error("Resend verification email failed:", e));
 
