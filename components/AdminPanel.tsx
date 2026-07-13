@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { ROLES, ROLE_STYLES } from "@/lib/constants";
 
 interface User {
   id: string;
@@ -12,16 +13,6 @@ interface User {
   verified: boolean;
   createdAt: string;
 }
-
-// Role ladder: user (no permissions) → uploader → management → admin
-const ROLES = ["user", "uploader", "management", "admin"] as const;
-
-const ROLE_STYLES: Record<string, string> = {
-  admin: "bg-yellow-500/20 text-yellow-300",
-  management: "bg-green-500/20 text-green-300",
-  uploader: "bg-blue-500/20 text-blue-300",
-  user: "bg-white/10 text-white/60",
-};
 
 interface FileItem {
   title: string;

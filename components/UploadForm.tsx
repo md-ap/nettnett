@@ -4,35 +4,8 @@ import { useState, useCallback } from "react";
 import { useDropzone } from "react-dropzone";
 import { useRouter } from "next/navigation";
 import RichTextEditor from "./RichTextEditor";
-
-const MEDIA_TYPES = [
-  { value: "texts", label: "Texts (Books, Documents, PDFs)" },
-  { value: "movies", label: "Movies (Video files)" },
-  { value: "audio", label: "Audio (Music, Podcasts)" },
-  { value: "image", label: "Images (Photos, Art)" },
-  { value: "software", label: "Software" },
-  { value: "data", label: "Data (Generic)" },
-];
-
-const LANGUAGES = [
-  { value: "", label: "Select language" },
-  { value: "eng", label: "English" },
-  { value: "spa", label: "Spanish" },
-  { value: "ara", label: "Arabic" },
-  { value: "zho", label: "Chinese" },
-  { value: "nld", label: "Dutch" },
-  { value: "fra", label: "French" },
-  { value: "deu", label: "German" },
-  { value: "hin", label: "Hindi" },
-  { value: "ita", label: "Italian" },
-  { value: "jpn", label: "Japanese" },
-  { value: "kor", label: "Korean" },
-  { value: "pol", label: "Polish" },
-  { value: "por", label: "Portuguese" },
-  { value: "rus", label: "Russian" },
-  { value: "swe", label: "Swedish" },
-  { value: "tur", label: "Turkish" },
-];
+import { MEDIA_TYPES, LANGUAGES } from "@/lib/constants";
+import { formatFileSize } from "@/lib/format";
 
 export default function UploadForm({ disabled = false, onRefresh }: { disabled?: boolean; onRefresh?: () => void }) {
   const [title, setTitle] = useState("");
@@ -214,14 +187,6 @@ export default function UploadForm({ disabled = false, onRefresh }: { disabled?:
     }
   }
 
-  function formatSize(bytes: number) {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-  }
-
   const totalSize = files.reduce((acc, f) => acc + f.size, 0);
 
   return (
@@ -374,7 +339,7 @@ export default function UploadForm({ disabled = false, onRefresh }: { disabled?:
                     >
                       <span className="min-w-0 truncate">
                         {file.name}{" "}
-                        <span className="text-white/40">({formatSize(file.size)})</span>
+                        <span className="text-white/40">({formatFileSize(file.size)})</span>
                       </span>
                       {!uploading && (
                         <button
@@ -389,7 +354,7 @@ export default function UploadForm({ disabled = false, onRefresh }: { disabled?:
                   ))}
                 </ul>
                 <p className="mt-2 text-xs text-white/40">
-                  {files.length} file{files.length !== 1 ? "s" : ""} &middot; {formatSize(totalSize)} total
+                  {files.length} file{files.length !== 1 ? "s" : ""} &middot; {formatFileSize(totalSize)} total
                 </p>
               </div>
             )}

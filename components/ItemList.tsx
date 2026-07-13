@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useMemo } from "react";
 import RichTextEditor from "./RichTextEditor";
+import { B2_PUBLIC_URL, MEDIA_TYPES, LANGUAGES } from "@/lib/constants";
+import { formatFileSize, formatDate } from "@/lib/format";
 
 interface UploadItemFile {
   key: string;
@@ -20,55 +22,7 @@ interface UploadItem {
   createdAt: string;
 }
 
-const B2_PUBLIC_URL = "https://f004.backblazeb2.com/file/nettnett1";
 const ITEMS_PER_PAGE = 10;
-
-const MEDIA_TYPES = [
-  { value: "texts", label: "Texts (Books, Documents, PDFs)" },
-  { value: "movies", label: "Movies (Video files)" },
-  { value: "audio", label: "Audio (Music, Podcasts)" },
-  { value: "image", label: "Images (Photos, Art)" },
-  { value: "software", label: "Software" },
-  { value: "data", label: "Data (Generic)" },
-];
-
-const LANGUAGES = [
-  { value: "", label: "Select language" },
-  { value: "eng", label: "English" },
-  { value: "spa", label: "Spanish" },
-  { value: "ara", label: "Arabic" },
-  { value: "zho", label: "Chinese" },
-  { value: "nld", label: "Dutch" },
-  { value: "fra", label: "French" },
-  { value: "deu", label: "German" },
-  { value: "hin", label: "Hindi" },
-  { value: "ita", label: "Italian" },
-  { value: "jpn", label: "Japanese" },
-  { value: "kor", label: "Korean" },
-  { value: "pol", label: "Polish" },
-  { value: "por", label: "Portuguese" },
-  { value: "rus", label: "Russian" },
-  { value: "swe", label: "Swedish" },
-  { value: "tur", label: "Turkish" },
-];
-
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-}
-
-function formatDate(dateString: string | Date): string {
-  return new Date(dateString).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 /* ── Chevron Icon ── */
 function ChevronIcon({ expanded }: { expanded: boolean }) {
