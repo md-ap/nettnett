@@ -204,20 +204,9 @@ export async function initializeDatabase() {
       );
     `);
 
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS files (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        file_name VARCHAR(500) NOT NULL,
-        file_key VARCHAR(500) NOT NULL,
-        file_size BIGINT NOT NULL,
-        uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_files_user_id ON files(user_id);
-    `);
+    // NOTE: the legacy `files` table is no longer created — file listings
+    // come from B2 (`listUserItems`) and metadata lives in `items`. The
+    // existing table in the shared DB is left untouched.
 
     // Items table — stores upload metadata (mirrors metadata.json in B2)
     await client.query(`

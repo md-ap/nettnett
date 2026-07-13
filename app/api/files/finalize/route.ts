@@ -2,84 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserFolder, saveMetadata } from "@/lib/b2";
 import { getSession, canUpload, getDbRole } from "@/lib/auth";
 import { sanitizeIdentifier } from "@/lib/internet-archive";
+import { triggerNasSync, triggerNasIaUpload } from "@/lib/nas-webhook";
 import pool from "@/lib/db";
-
-async function fetchWithRetry(
-  url: string,
-  options: RequestInit,
-  label: string,
-  retries = 3
-) {
-  const timeouts = [10000, 15000, 20000];
-  const delays = [0, 5000, 10000];
-
-  for (let i = 0; i < retries; i++) {
-    try {
-      if (delays[i] > 0) {
-        await new Promise((r) => setTimeout(r, delays[i]));
-      }
-      await fetch(url, {
-        ...options,
-        signal: AbortSignal.timeout(timeouts[i]),
-      });
-      console.log(`${label}: succeeded on attempt ${i + 1}`);
-      return;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`${label}: attempt ${i + 1}/${retries} failed: ${msg}`);
-      if (i === retries - 1) {
-        console.error(`${label}: all ${retries} attempts failed`);
-      }
-    }
-  }
-}
-
-async function triggerNasSync(): Promise<void> {
-  const webhookUrl = process.env.NAS_WEBHOOK_URL;
-  const webhookSecret = process.env.NAS_WEBHOOK_SECRET;
-  if (!webhookUrl || !webhookSecret) return;
-
-  await fetchWithRetry(
-    webhookUrl,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${webhookSecret}`,
-        "Content-Type": "application/json",
-      },
-    },
-    "NAS sync webhook"
-  );
-}
-
-async function triggerNasIaUpload(data: {
-  userFolder: string;
-  titleFolder: string;
-  iaIdentifier: string;
-}): Promise<void> {
-  const webhookUrl = process.env.NAS_WEBHOOK_URL;
-  const webhookSecret = process.env.NAS_WEBHOOK_SECRET;
-  if (!webhookUrl || !webhookSecret) return;
-
-  // Replace only the trailing path, not the hostname (webhookUrl contains "sync" in both hostname and path)
-  const iaWebhookUrl = webhookUrl.endsWith("/sync")
-    ? webhookUrl.slice(0, -5) + "/ia-upload"
-    : webhookUrl + "/ia-upload";
-  console.log(`triggerNasIaUpload: calling ${iaWebhookUrl} with`, JSON.stringify(data));
-
-  await fetchWithRetry(
-    iaWebhookUrl,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${webhookSecret}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(data),
-    },
-    "NAS IA upload webhook"
-  );
-}
 
 export async function POST(request: NextRequest) {
   try {
