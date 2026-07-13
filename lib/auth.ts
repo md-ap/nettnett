@@ -94,11 +94,25 @@ export async function requireRole(
   let row: { role: string | null; b2_folder: string | null } | undefined;
   try {
     const { default: pool } = await import("./db");
-    const result = await pool.query(
-      "SELECT role, b2_folder FROM public.users WHERE id = $1",
-      [session.userId]
-    );
-    row = result.rows[0];
+    try {
+      const result = await pool.query(
+        "SELECT role, b2_folder FROM public.users WHERE id = $1",
+        [session.userId]
+      );
+      row = result.rows[0];
+    } catch (err) {
+      // 42703 = b2_folder column doesn't exist yet (pre-/api/setup bootstrap).
+      // Without this fallback the setup endpoint's own admin gate could never
+      // pass to create the column in the first place.
+      if ((err as { code?: string }).code !== "42703") throw err;
+      const result = await pool.query(
+        "SELECT role FROM public.users WHERE id = $1",
+        [session.userId]
+      );
+      row = result.rows[0]
+        ? { role: result.rows[0].role, b2_folder: null }
+        : undefined;
+    }
   } catch (err) {
     console.error("requireRole: DB lookup failed:", err);
     return NextResponse.json(
