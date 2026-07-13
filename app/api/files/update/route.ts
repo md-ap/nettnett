@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getSession, canUpload, getDbRole } from "@/lib/auth";
 import { getUserFolder, saveMetadata } from "@/lib/b2";
 import { s3Client, BUCKET_NAME } from "@/lib/b2";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -10,6 +10,12 @@ export async function PUT(request: NextRequest) {
     const session = await getSession();
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (!canUpload(await getDbRole(session.userId, session.role))) {
+      return NextResponse.json(
+        { error: "Your account does not have upload permissions yet" },
+        { status: 403 }
+      );
     }
 
     const body = await request.json();

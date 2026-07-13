@@ -9,8 +9,19 @@ interface User {
   lastName: string;
   role: string;
   canManage: boolean;
+  verified: boolean;
   createdAt: string;
 }
+
+// Role ladder: user (no permissions) → uploader → management → admin
+const ROLES = ["user", "uploader", "management", "admin"] as const;
+
+const ROLE_STYLES: Record<string, string> = {
+  admin: "bg-yellow-500/20 text-yellow-300",
+  management: "bg-green-500/20 text-green-300",
+  uploader: "bg-blue-500/20 text-blue-300",
+  user: "bg-white/10 text-white/60",
+};
 
 interface FileItem {
   title: string;
@@ -32,34 +43,10 @@ export default function AdminPanel() {
   const [deleteUser, setDeleteUser] = useState<User | null>(null);
   const [viewFilesUser, setViewFilesUser] = useState<User | null>(null);
   const [togglingRole, setTogglingRole] = useState<string | null>(null);
-  const [togglingManagement, setTogglingManagement] = useState<string | null>(null);
+  const [togglingVerify, setTogglingVerify] = useState<string | null>(null);
 
-  async function handleToggleManagement(user: User) {
-    const newValue = !user.canManage;
-    setTogglingManagement(user.id);
-    try {
-      const res = await fetch(`/api/admin/users/${user.id}/management`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ canManage: newValue }),
-      });
-      if (res.ok) {
-        setUsers((prev) =>
-          prev.map((u) => (u.id === user.id ? { ...u, canManage: newValue } : u))
-        );
-      } else {
-        const data = await res.json();
-        alert(data.error || "Failed to update management access");
-      }
-    } catch {
-      alert("Network error");
-    } finally {
-      setTogglingManagement(null);
-    }
-  }
-
-  async function handleToggleRole(user: User) {
-    const newRole = user.role === "admin" ? "user" : "admin";
+  async function handleChangeRole(user: User, newRole: string) {
+    if (newRole === user.role) return;
     setTogglingRole(user.id);
     try {
       const res = await fetch(`/api/admin/users/${user.id}/role`, {
@@ -79,6 +66,30 @@ export default function AdminPanel() {
       alert("Network error");
     } finally {
       setTogglingRole(null);
+    }
+  }
+
+  async function handleToggleVerified(user: User) {
+    const newValue = !user.verified;
+    setTogglingVerify(user.id);
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/verify`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ verified: newValue }),
+      });
+      if (res.ok) {
+        setUsers((prev) =>
+          prev.map((u) => (u.id === user.id ? { ...u, verified: newValue } : u))
+        );
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to update verification");
+      }
+    } catch {
+      alert("Network error");
+    } finally {
+      setTogglingVerify(null);
     }
   }
 
@@ -152,10 +163,10 @@ export default function AdminPanel() {
                   Role
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase text-white/50">
-                  Mgmt
+                  Created
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase text-white/50">
-                  Created
+                  Verified
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-medium uppercase text-white/50">
                   Actions
@@ -175,45 +186,42 @@ export default function AdminPanel() {
                     {user.firstName} {user.lastName}
                   </td>
                   <td className="px-4 py-3">
-                    <button
-                      onClick={() => handleToggleRole(user)}
+                    <select
+                      value={user.role}
+                      onChange={(e) => handleChangeRole(user, e.target.value)}
                       disabled={togglingRole === user.id}
-                      title={`Click to make ${user.role === "admin" ? "user" : "admin"}`}
-                      className={`rounded px-2 py-0.5 text-xs cursor-pointer transition-colors disabled:opacity-50 ${
-                        user.role === "admin"
-                          ? "bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30"
-                          : "bg-white/10 text-white/60 hover:bg-white/20"
+                      title="user: sin permisos · uploader: sube archivos · management: archivos + radio · admin: todo"
+                      className={`rounded border-0 px-2 py-0.5 text-xs cursor-pointer outline-none transition-colors disabled:opacity-50 [&>option]:bg-neutral-900 [&>option]:text-white ${
+                        ROLE_STYLES[user.role] || ROLE_STYLES.user
                       }`}
                     >
-                      {togglingRole === user.id ? "..." : user.role}
-                    </button>
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      onClick={() => handleToggleManagement(user)}
-                      disabled={togglingManagement === user.id || user.role === "admin"}
-                      title={
-                        user.role === "admin"
-                          ? "Admins always have management access"
-                          : `Click to ${user.canManage ? "revoke" : "grant"} management access`
-                      }
-                      className={`rounded px-2 py-0.5 text-xs cursor-pointer transition-colors disabled:opacity-50 ${
-                        user.role === "admin" || user.canManage
-                          ? "bg-green-500/20 text-green-300 hover:bg-green-500/30"
-                          : "bg-white/10 text-white/40 hover:bg-white/20"
-                      }`}
-                    >
-                      {togglingManagement === user.id
-                        ? "..."
-                        : user.role === "admin"
-                          ? "admin"
-                          : user.canManage
-                            ? "yes"
-                            : "no"}
-                    </button>
+                      {ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {togglingRole === user.id ? "..." : r}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td className="px-4 py-3 text-sm text-white/40">
                     {new Date(user.createdAt).toLocaleDateString()}
+                  </td>
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => handleToggleVerified(user)}
+                      disabled={togglingVerify === user.id}
+                      title={
+                        user.verified
+                          ? "Click to mark as unverified"
+                          : "Click to verify manually (skips the email confirmation)"
+                      }
+                      className={`rounded px-2 py-0.5 text-xs cursor-pointer transition-colors disabled:opacity-50 ${
+                        user.verified
+                          ? "bg-green-500/20 text-green-300 hover:bg-green-500/30"
+                          : "bg-red-500/20 text-red-300 hover:bg-red-500/30"
+                      }`}
+                    >
+                      {togglingVerify === user.id ? "..." : user.verified ? "yes" : "no"}
+                    </button>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
@@ -291,6 +299,7 @@ function AddUserModal({
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [password, setPassword] = useState("");
+  const [role, setRole] = useState("uploader");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -303,7 +312,7 @@ function AddUserModal({
       const res = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, firstName, lastName, password }),
+        body: JSON.stringify({ email, firstName, lastName, password, role }),
       });
 
       const data = await res.json();
@@ -361,6 +370,22 @@ function AddUserModal({
             minLength={6}
             className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-white/40"
           />
+          <div>
+            <label className="mb-1 block text-xs text-white/40">Role</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-white/40 [&>option]:bg-neutral-900"
+            >
+              <option value="user">user — sin permisos</option>
+              <option value="uploader">uploader — sube archivos</option>
+              <option value="management">management — archivos + radio</option>
+              <option value="admin">admin — todo</option>
+            </select>
+          </div>
+          <p className="text-xs text-white/30">
+            Users created here are automatically email-verified.
+          </p>
           {error && <p className="text-sm text-red-400">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
             <button

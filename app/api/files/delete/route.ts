@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getSession, canUpload, getDbRole } from "@/lib/auth";
 import { getUserFolder, deleteItem } from "@/lib/b2";
 import { deleteFromInternetArchive } from "@/lib/internet-archive";
 import pool from "@/lib/db";
@@ -65,6 +65,12 @@ export async function DELETE(request: NextRequest) {
     const session = await getSession();
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (!canUpload(await getDbRole(session.userId, session.role))) {
+      return NextResponse.json(
+        { error: "Your account does not have upload permissions yet" },
+        { status: 403 }
+      );
     }
 
     const { titleFolder, iaIdentifier, fileNames } = await request.json();

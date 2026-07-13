@@ -115,24 +115,65 @@ function emailLayout({ heading, bodyHtml, ctaText, ctaUrl }: TemplateArgs): stri
 
 // ─── Emails ─────────────────────────────────────────────────────
 
-export async function sendWelcomeEmail(
+// Welcome + email confirmation in a single message. New accounts have a
+// 7-day grace period; unverified accounts are deactivated after that.
+export async function sendVerificationEmail(
   to: string,
   firstName: string,
-  appUrl: string
+  verifyUrl: string,
+  isNewAccount: boolean
 ): Promise<boolean> {
   return sendEmail({
     to,
-    subject: "Bienvenido a NettNett Radio 📻",
+    subject: isNewAccount
+      ? "Confirma tu correo — Bienvenido a NettNett Radio 📻"
+      : "Confirma tu correo — NettNett Radio",
     html: emailLayout({
-      heading: `Hola ${firstName}, bienvenido a NettNett`,
+      heading: isNewAccount
+        ? `Hola ${firstName}, bienvenido a NettNett`
+        : `Hola ${firstName}`,
       bodyHtml: `
-        <p style="margin: 0 0 12px 0;">Tu cuenta fue creada con éxito.</p>
+        ${
+          isNewAccount
+            ? `<p style="margin: 0 0 12px 0;">Tu cuenta fue creada con éxito.
+               Desde tu panel puedes subir audio y materiales al archivo,
+               publicarlos opcionalmente en Internet Archive, y escuchar la radio en vivo.</p>`
+            : ""
+        }
         <p style="margin: 0 0 12px 0;">
-          Desde tu panel puedes subir audio y materiales al archivo,
-          publicarlos opcionalmente en Internet Archive, y escuchar la radio en vivo.
+          Confirma tu dirección de correo con el botón de abajo.
+          Si no la confirmas en <strong style="color:#ffffff;">7 días</strong>,
+          tu cuenta se desactivará hasta que la verifiques.
         </p>`,
-      ctaText: "Ir a mi panel",
-      ctaUrl: `${appUrl}/dashboard`,
+      ctaText: "Confirmar mi correo",
+      ctaUrl: verifyUrl,
+    }),
+  });
+}
+
+// Notifies the admin inbox when a plain "user" requests NettNett permissions
+export async function sendAccessRequestEmail(
+  adminEmail: string,
+  requesterName: string,
+  requesterEmail: string,
+  appUrl: string
+): Promise<boolean> {
+  return sendEmail({
+    to: adminEmail,
+    subject: `Solicitud de permisos — ${requesterName}`,
+    html: emailLayout({
+      heading: "Nueva solicitud de permisos",
+      bodyHtml: `
+        <p style="margin: 0 0 12px 0;">
+          <strong style="color:#ffffff;">${requesterName}</strong>
+          (${requesterEmail}) solicita permisos para participar en NettNett.
+        </p>
+        <p style="margin: 0 0 12px 0;">
+          Entra al panel de administración para asignarle un rol
+          (uploader, management o admin).
+        </p>`,
+      ctaText: "Abrir panel de admin",
+      ctaUrl: `${appUrl}/admin`,
     }),
   });
 }

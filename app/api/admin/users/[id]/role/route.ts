@@ -15,9 +15,9 @@ export async function PATCH(
     const { id: userId } = await params;
     const { role } = await request.json();
 
-    if (!role || !["admin", "user"].includes(role)) {
+    if (!role || !["user", "uploader", "management", "admin"].includes(role)) {
       return NextResponse.json(
-        { error: "Role must be 'admin' or 'user'" },
+        { error: "Role must be one of: user, uploader, management, admin" },
         { status: 400 }
       );
     }

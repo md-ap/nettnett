@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { getSession } from "@/lib/auth";
 
+// Admin toggles a user's email verification manually (e.g. to activate a
+// registered user without making them click the confirmation email).
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -13,18 +15,22 @@ export async function PATCH(
     }
 
     const { id: userId } = await params;
-    const { canManage } = await request.json();
+    const { verified } = await request.json();
 
-    if (typeof canManage !== "boolean") {
+    if (typeof verified !== "boolean") {
       return NextResponse.json(
-        { error: "canManage must be a boolean" },
+        { error: "verified must be a boolean" },
         { status: 400 }
       );
     }
 
     const result = await pool.query(
-      `UPDATE public.users SET can_manage = $1 WHERE id = $2 RETURNING id, email, can_manage`,
-      [canManage, userId]
+      `UPDATE public.users
+       SET email_verified = $1,
+           email_verified_at = CASE WHEN $1 THEN NOW() ELSE NULL END
+       WHERE id = $2
+       RETURNING id, email, email_verified`,
+      [verified, userId]
     );
 
     if (result.rows.length === 0) {
@@ -32,14 +38,11 @@ export async function PATCH(
     }
 
     return NextResponse.json({
-      message: "Management access updated",
+      message: "Verification updated",
       user: result.rows[0],
     });
   } catch (error) {
-    console.error("Admin toggle management error:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    console.error("Admin toggle verify error:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

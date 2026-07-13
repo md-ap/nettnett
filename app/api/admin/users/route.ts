@@ -12,7 +12,7 @@ export async function GET() {
     }
 
     const result = await pool.query(
-      `SELECT id, email, first_name, last_name, role, can_manage, created_at
+      `SELECT id, email, first_name, last_name, role, can_manage, email_verified, created_at
        FROM public.users
        ORDER BY created_at DESC`
     );
@@ -24,6 +24,7 @@ export async function GET() {
       lastName: row.last_name,
       role: row.role || "user",
       canManage: row.can_manage || false,
+      verified: row.email_verified === true,
       createdAt: row.created_at,
     }));
 
@@ -44,11 +45,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const { email, firstName, lastName, password } = await request.json();
+    const { email, firstName, lastName, password, role } = await request.json();
 
     if (!email || !firstName || !lastName || !password) {
       return NextResponse.json(
         { error: "All fields are required" },
+        { status: 400 }
+      );
+    }
+
+    const newRole = role || "uploader";
+    if (!["user", "uploader", "management", "admin"].includes(newRole)) {
+      return NextResponse.json(
+        { error: "Role must be one of: user, uploader, management, admin" },
         { status: 400 }
       );
     }
@@ -74,11 +83,12 @@ export async function POST(request: NextRequest) {
 
     const passwordHash = await bcrypt.hash(password, 12);
 
+    // Admin-created accounts are trusted: mark them email-verified
     const result = await pool.query(
-      `INSERT INTO public.users (email, first_name, last_name, password_hash, role)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO public.users (email, first_name, last_name, password_hash, role, email_verified, email_verified_at)
+       VALUES ($1, $2, $3, $4, $5, true, NOW())
        RETURNING id, email, first_name, last_name, role, created_at`,
-      [email.toLowerCase(), firstName, lastName, passwordHash, "user"]
+      [email.toLowerCase(), firstName, lastName, passwordHash, newRole]
     );
 
     // Create B2 folder for new user

@@ -11,13 +11,14 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check permission against DB (not JWT, for freshness)
+    // Check permission against DB (not JWT, for freshness).
+    // Role ladder: only 'management' and 'admin' may enter.
     const userResult = await pool.query(
-      "SELECT role, can_manage FROM public.users WHERE id = $1",
+      "SELECT role FROM public.users WHERE id = $1",
       [session.userId]
     );
     const user = userResult.rows[0];
-    const hasPermission = user?.role === "admin" || user?.can_manage === true;
+    const hasPermission = user?.role === "admin" || user?.role === "management";
 
     if (!hasPermission) {
       return NextResponse.json({ hasPermission: false }, { status: 403 });
@@ -67,6 +68,16 @@ export async function POST(request: NextRequest) {
     const session = await getSession();
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Same role gate as GET — plain users must not touch the lock
+    const roleResult = await pool.query(
+      "SELECT role FROM public.users WHERE id = $1",
+      [session.userId]
+    );
+    const dbRole = roleResult.rows[0]?.role;
+    if (dbRole !== "admin" && dbRole !== "management") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const { action } = await request.json();

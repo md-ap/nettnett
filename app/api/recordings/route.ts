@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getSession, canManageRadio, getDbRole } from "@/lib/auth";
 import {
   listRecordings,
   getRecordingPlayUrl,
@@ -18,6 +18,12 @@ export async function GET() {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canManageRadio(await getDbRole(session.userId, session.role))) {
+    return NextResponse.json(
+      { error: "Management access required" },
+      { status: 403 }
+    );
   }
 
   try {
@@ -40,6 +46,12 @@ export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canManageRadio(await getDbRole(session.userId, session.role))) {
+    return NextResponse.json(
+      { error: "Management access required" },
+      { status: 403 }
+    );
   }
 
   try {

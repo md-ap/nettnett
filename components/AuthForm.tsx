@@ -15,6 +15,7 @@ export default function AuthForm() {
   const [lastName, setLastName] = useState("");
   const [turnstileToken, setTurnstileToken] = useState("");
   const [error, setError] = useState("");
+  const [needsVerification, setNeedsVerification] = useState(false);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
@@ -39,6 +40,7 @@ export default function AuthForm() {
 
       if (!res.ok) {
         setError(data.error || "Something went wrong");
+        setNeedsVerification(!!data.needsVerification);
         return;
       }
 
@@ -59,6 +61,13 @@ export default function AuthForm() {
       {error && (
         <div className="mb-4 rounded bg-red-500/10 p-3 text-sm text-red-400">
           {error}
+          {needsVerification && (
+            <p className="mt-2">
+              <Link href="/verify-email" className="text-white underline">
+                Resend confirmation email →
+              </Link>
+            </p>
+          )}
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getSession, canManageRadio, getDbRole } from "@/lib/auth";
 import { detectRemoteAudioDuration } from "@/lib/audio-duration";
 
 const AZURACAST_URL = process.env.NEXT_PUBLIC_AZURACAST_URL || "";
@@ -11,6 +11,12 @@ export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canManageRadio(await getDbRole(session.userId, session.role))) {
+    return NextResponse.json(
+      { error: "Management access required" },
+      { status: 403 }
+    );
   }
 
   const { searchParams } = new URL(request.url);
@@ -84,6 +90,12 @@ export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canManageRadio(await getDbRole(session.userId, session.role))) {
+    return NextResponse.json(
+      { error: "Management access required" },
+      { status: 403 }
+    );
   }
 
   try {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getSession, canUpload, getDbRole } from "@/lib/auth";
 import { getUserFolder, getPresignedUploadUrl } from "@/lib/b2";
 
 export async function POST(request: NextRequest) {
@@ -7,6 +7,12 @@ export async function POST(request: NextRequest) {
     const session = await getSession();
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (!canUpload(await getDbRole(session.userId, session.role))) {
+      return NextResponse.json(
+        { error: "Your account does not have upload permissions yet" },
+        { status: 403 }
+      );
     }
 
     const { title, files } = await request.json();
