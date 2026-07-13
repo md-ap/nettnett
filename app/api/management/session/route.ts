@@ -17,7 +17,8 @@ export async function GET() {
       `UPDATE public.management_sessions
        SET is_active = false
        WHERE is_active = true
-       AND last_activity < NOW() - INTERVAL '${INACTIVITY_TIMEOUT_MINUTES} minutes'`
+       AND last_activity < NOW() - make_interval(mins => $1)`,
+      [INACTIVITY_TIMEOUT_MINUTES]
     );
 
     // Get current active session
@@ -64,30 +65,46 @@ export async function POST(request: NextRequest) {
 
     switch (action) {
       case "claim": {
-        // Deactivate any existing active session by another user and record who kicked them
-        await pool.query(
-          `UPDATE public.management_sessions
-           SET is_active = false,
-               kicked_by_user_id = $1,
-               kicked_by_user_name = $2
-           WHERE is_active = true AND user_id != $1`,
-          [session.userId, userName]
-        );
-
-        // Deactivate own old sessions (if re-claiming)
-        await pool.query(
-          `UPDATE public.management_sessions
-           SET is_active = false
-           WHERE is_active = true AND user_id = $1`,
-          [session.userId]
-        );
-
-        // Create new active session
-        await pool.query(
-          `INSERT INTO public.management_sessions (user_id, user_name, is_active)
-           VALUES ($1, $2, true)`,
-          [session.userId, userName]
-        );
+        // Atomic takeover: deactivate others (recording who kicked them),
+        // deactivate own stale rows, insert the new active one. The partial
+        // unique index on is_active makes a concurrent claim surface as a
+        // 23505 → clean 409 instead of a half-applied state / 500.
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          await client.query(
+            `UPDATE public.management_sessions
+             SET is_active = false,
+                 kicked_by_user_id = $1,
+                 kicked_by_user_name = $2
+             WHERE is_active = true AND user_id != $1`,
+            [session.userId, userName]
+          );
+          await client.query(
+            `UPDATE public.management_sessions
+             SET is_active = false
+             WHERE is_active = true AND user_id = $1`,
+            [session.userId]
+          );
+          await client.query(
+            `INSERT INTO public.management_sessions (user_id, user_name, is_active)
+             VALUES ($1, $2, true)`,
+            [session.userId, userName]
+          );
+          await client.query("COMMIT");
+        } catch (e) {
+          await client.query("ROLLBACK").catch(() => {});
+          const err = e as { code?: string };
+          if (err.code === "23505") {
+            return NextResponse.json(
+              { error: "Someone else just took the session" },
+              { status: 409 }
+            );
+          }
+          throw e;
+        } finally {
+          client.release();
+        }
 
         return NextResponse.json({ message: "Session claimed" });
       }

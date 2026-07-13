@@ -11,6 +11,35 @@ const B2_PUBLIC_URL = "https://f004.backblazeb2.com/file";
 const cache = new Map<string, { data: Record<string, unknown>; ts: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+// Full-bucket listing cache. This endpoint is public and the player polls
+// it — a request must never pay (or weaponize) a fresh full-bucket scan.
+// Paginates with ContinuationToken (the old single call silently truncated
+// at 1000 objects). Per-warm-instance cache on serverless, still a big win.
+let bucketListing: { keys: string[]; ts: number } | null = null;
+const LISTING_TTL = 60 * 1000;
+
+async function getBucketListing(): Promise<string[]> {
+  if (bucketListing && Date.now() - bucketListing.ts < LISTING_TTL) {
+    return bucketListing.keys;
+  }
+  const keys: string[] = [];
+  let token: string | undefined;
+  do {
+    const page = await s3Client.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        ContinuationToken: token,
+      })
+    );
+    for (const obj of page.Contents ?? []) {
+      if (obj.Key && obj.Size) keys.push(obj.Key);
+    }
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
+  bucketListing = { keys, ts: Date.now() };
+  return keys;
+}
+
 /**
  * Public endpoint to fetch item metadata for a given AzuraCast file.
  * Supports two modes:
@@ -66,39 +95,30 @@ async function handleSongSearch(songTitle: string) {
   // AzuraCast title "NortenoGalactico" should match file "NortenoGalactico.mp3"
   const normalizedSong = songTitle.toLowerCase().replace(/\s+/g, "");
 
-  // Search B2 bucket for all user folders, find audio files matching the song title
+  // Search the (cached) bucket listing for an audio file matching the title
   try {
-    const listResult = await s3Client.send(
-      new ListObjectsV2Command({
-        Bucket: BUCKET_NAME,
-        Delimiter: undefined,
-      })
-    );
+    const listing = await getBucketListing();
+    for (const key of listing) {
+      const keyParts = key.split("/");
+      // Expected: userFolder/titleFolder/filename
+      if (keyParts.length < 3) continue;
 
-    if (listResult.Contents) {
-      for (const obj of listResult.Contents) {
-        if (!obj.Key || obj.Size === 0) continue;
-        const keyParts = obj.Key.split("/");
-        // Expected: userFolder/titleFolder/filename
-        if (keyParts.length < 3) continue;
+      const filename = keyParts[keyParts.length - 1];
+      const isAudio = AUDIO_EXTENSIONS.some((ext) => filename.toLowerCase().endsWith(ext));
+      if (!isAudio) continue;
 
-        const filename = keyParts[keyParts.length - 1];
-        const isAudio = AUDIO_EXTENSIONS.some((ext) => filename.toLowerCase().endsWith(ext));
-        if (!isAudio) continue;
-
-        // Strip extension and normalize for comparison
-        const filenameNoExt = filename.replace(/\.[^.]+$/, "").toLowerCase().replace(/\s+/g, "");
-        if (filenameNoExt === normalizedSong) {
-          const userFolder = keyParts[0];
-          const titleFolder = keyParts[1];
-          const result = await fetchMetadata(userFolder, titleFolder);
-          // Also cache under the song key
-          const body = await result.clone().json();
-          if (body.title || body.creator) {
-            cache.set(cacheKey, { data: body, ts: Date.now() });
-          }
-          return result;
+      // Strip extension and normalize for comparison
+      const filenameNoExt = filename.replace(/\.[^.]+$/, "").toLowerCase().replace(/\s+/g, "");
+      if (filenameNoExt === normalizedSong) {
+        const userFolder = keyParts[0];
+        const titleFolder = keyParts[1];
+        const result = await fetchMetadata(userFolder, titleFolder);
+        // Also cache under the song key
+        const body = await result.clone().json();
+        if (body.title || body.creator) {
+          cache.set(cacheKey, { data: body, ts: Date.now() });
         }
+        return result;
       }
     }
   } catch (err) {
