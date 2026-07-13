@@ -198,7 +198,7 @@ export default function RecordingsManager() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={() => setPlayingKey(playingKey === rec.key ? null : rec.key)}
                     className="rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20"

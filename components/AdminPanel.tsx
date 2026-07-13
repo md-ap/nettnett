@@ -111,6 +111,67 @@ export default function AdminPanel() {
         .includes(searchTerm.toLowerCase())
   );
 
+  // Per-user controls shared by the desktop table and the mobile cards
+  const roleSelect = (user: User) => (
+    <select
+      value={user.role}
+      onChange={(e) => handleChangeRole(user, e.target.value)}
+      disabled={togglingRole === user.id}
+      title="user: sin permisos · uploader: sube archivos · management: archivos + radio · admin: todo"
+      className={`rounded border-0 px-2 py-0.5 text-xs cursor-pointer outline-none transition-colors disabled:opacity-50 [&>option]:bg-neutral-900 [&>option]:text-white ${
+        ROLE_STYLES[user.role] || ROLE_STYLES.user
+      }`}
+    >
+      {ROLES.map((r) => (
+        <option key={r} value={r}>
+          {togglingRole === user.id ? "..." : r}
+        </option>
+      ))}
+    </select>
+  );
+
+  const verifiedToggle = (user: User) => (
+    <button
+      onClick={() => handleToggleVerified(user)}
+      disabled={togglingVerify === user.id}
+      title={
+        user.verified
+          ? "Click to mark as unverified"
+          : "Click to verify manually (skips the email confirmation)"
+      }
+      className={`rounded px-2 py-0.5 text-xs cursor-pointer transition-colors disabled:opacity-50 ${
+        user.verified
+          ? "bg-green-500/20 text-green-300 hover:bg-green-500/30"
+          : "bg-red-500/20 text-red-300 hover:bg-red-500/30"
+      }`}
+    >
+      {togglingVerify === user.id ? "..." : user.verified ? "yes" : "no"}
+    </button>
+  );
+
+  const actionButtons = (user: User) => (
+    <>
+      <button
+        onClick={() => setViewFilesUser(user)}
+        className="rounded px-2 py-1 text-xs text-blue-400 transition-colors hover:bg-blue-500/10"
+      >
+        Files
+      </button>
+      <button
+        onClick={() => setEditPasswordUser(user)}
+        className="rounded px-2 py-1 text-xs text-yellow-400 transition-colors hover:bg-yellow-500/10"
+      >
+        Password
+      </button>
+      <button
+        onClick={() => setDeleteUser(user)}
+        className="rounded px-2 py-1 text-xs text-red-400 transition-colors hover:bg-red-500/10"
+      >
+        Delete
+      </button>
+    </>
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -140,7 +201,9 @@ export default function AdminPanel() {
       ) : filteredUsers.length === 0 ? (
         <p className="py-8 text-center text-white/40">No users found.</p>
       ) : (
-        <div className="overflow-x-auto rounded border border-white/10">
+        <>
+        {/* Desktop/tablet table */}
+        <div className="hidden overflow-x-auto rounded border border-white/10 md:block">
           <table className="w-full">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
@@ -176,64 +239,14 @@ export default function AdminPanel() {
                   <td className="px-4 py-3 text-sm text-white">
                     {user.firstName} {user.lastName}
                   </td>
-                  <td className="px-4 py-3">
-                    <select
-                      value={user.role}
-                      onChange={(e) => handleChangeRole(user, e.target.value)}
-                      disabled={togglingRole === user.id}
-                      title="user: sin permisos · uploader: sube archivos · management: archivos + radio · admin: todo"
-                      className={`rounded border-0 px-2 py-0.5 text-xs cursor-pointer outline-none transition-colors disabled:opacity-50 [&>option]:bg-neutral-900 [&>option]:text-white ${
-                        ROLE_STYLES[user.role] || ROLE_STYLES.user
-                      }`}
-                    >
-                      {ROLES.map((r) => (
-                        <option key={r} value={r}>
-                          {togglingRole === user.id ? "..." : r}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
+                  <td className="px-4 py-3">{roleSelect(user)}</td>
                   <td className="px-4 py-3 text-sm text-white/40">
                     {new Date(user.createdAt).toLocaleDateString()}
                   </td>
-                  <td className="px-4 py-3">
-                    <button
-                      onClick={() => handleToggleVerified(user)}
-                      disabled={togglingVerify === user.id}
-                      title={
-                        user.verified
-                          ? "Click to mark as unverified"
-                          : "Click to verify manually (skips the email confirmation)"
-                      }
-                      className={`rounded px-2 py-0.5 text-xs cursor-pointer transition-colors disabled:opacity-50 ${
-                        user.verified
-                          ? "bg-green-500/20 text-green-300 hover:bg-green-500/30"
-                          : "bg-red-500/20 text-red-300 hover:bg-red-500/30"
-                      }`}
-                    >
-                      {togglingVerify === user.id ? "..." : user.verified ? "yes" : "no"}
-                    </button>
-                  </td>
+                  <td className="px-4 py-3">{verifiedToggle(user)}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => setViewFilesUser(user)}
-                        className="rounded px-2 py-1 text-xs text-blue-400 transition-colors hover:bg-blue-500/10"
-                      >
-                        Files
-                      </button>
-                      <button
-                        onClick={() => setEditPasswordUser(user)}
-                        className="rounded px-2 py-1 text-xs text-yellow-400 transition-colors hover:bg-yellow-500/10"
-                      >
-                        Password
-                      </button>
-                      <button
-                        onClick={() => setDeleteUser(user)}
-                        className="rounded px-2 py-1 text-xs text-red-400 transition-colors hover:bg-red-500/10"
-                      >
-                        Delete
-                      </button>
+                      {actionButtons(user)}
                     </div>
                   </td>
                 </tr>
@@ -241,6 +254,34 @@ export default function AdminPanel() {
             </tbody>
           </table>
         </div>
+
+        {/* Phone: card per user (a 6-column table can't reflow at 375px) */}
+        <div className="space-y-3 md:hidden">
+          {filteredUsers.map((user) => (
+            <div
+              key={user.id}
+              className="space-y-3 rounded border border-white/10 bg-white/5 p-4"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-white">
+                  {user.firstName} {user.lastName}
+                </p>
+                <p className="truncate text-xs text-white/40">{user.email}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {roleSelect(user)}
+                {verifiedToggle(user)}
+                <span className="text-xs text-white/40">
+                  {new Date(user.createdAt).toLocaleDateString()}
+                </span>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                {actionButtons(user)}
+              </div>
+            </div>
+          ))}
+        </div>
+        </>
       )}
 
       <p className="text-xs text-white/30">

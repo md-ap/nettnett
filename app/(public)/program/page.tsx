@@ -1,6 +1,18 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Spinner from "@/components/ui/Spinner";
+import {
+  DAY_LABELS,
+  timeToMinutes,
+  formatTime24,
+  isNowInRange,
+  getWeekStart,
+  formatWeekRange,
+  formatDayFull,
+  formatDayDate,
+  isSameDay,
+} from "@/lib/schedule";
 
 /* ─── Types ─── */
 interface WeeklyEntry {
@@ -27,68 +39,7 @@ interface ScheduleEntry {
   is_now: boolean;
 }
 
-/* ─── Constants ─── */
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const DAY_LABELS_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
-
 /* ─── Helpers ─── */
-function formatTime24(time: string): string {
-  const parts = time.split(":");
-  return `${parts[0]}:${parts[1]}`;
-}
-
-function timeToMinutes(time: string): number {
-  const [h, m] = time.split(":").map(Number);
-  return h * 60 + m;
-}
-
-function isNowInRange(startTime: string, endTime: string, dayNum: number): boolean {
-  const now = new Date();
-  if (now.getDay() !== dayNum) return false;
-  const nowMins = now.getHours() * 60 + now.getMinutes();
-  const startMins = timeToMinutes(startTime);
-  const endMins = timeToMinutes(endTime);
-  if (endMins > startMins) {
-    return nowMins >= startMins && nowMins < endMins;
-  }
-  return nowMins >= startMins || nowMins < endMins;
-}
-
-function getWeekStart(date: Date): Date {
-  const d = new Date(date);
-  d.setDate(d.getDate() - d.getDay());
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function formatWeekRange(weekStart: Date): string {
-  const end = new Date(weekStart);
-  end.setDate(end.getDate() + 6);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const startStr = `${months[weekStart.getMonth()]} ${weekStart.getDate()}`;
-  const endStr = `${weekStart.getMonth() !== end.getMonth() ? months[end.getMonth()] + " " : ""}${end.getDate()}, ${end.getFullYear()}`;
-  return `${startStr} – ${endStr}`;
-}
-
-function formatDayFull(weekStart: Date, dayIdx: number): string {
-  const d = new Date(weekStart);
-  d.setDate(d.getDate() + dayIdx);
-  const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  return `${dayNames[dayIdx]}, ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
-}
-
-function formatDayDate(weekStart: Date, dayIdx: number): string {
-  const d = new Date(weekStart);
-  d.setDate(d.getDate() + dayIdx);
-  return `${d.getDate()}`;
-}
-
-function isSameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
 function getColor(id: number): string {
   const colors = [
     "border-blue-500/30 bg-blue-500/10",
@@ -445,57 +396,103 @@ export default function ProgramPage() {
       {/* Content */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+          <Spinner />
         </div>
       ) : viewMode === "week" ? (
-        /* ─── WEEK VIEW: Grid with all 7 days ─── */
+        /* ─── WEEK VIEW: 7-column grid on md+, stacked day list on phones ─── */
         <div>
-          {/* Day column headers */}
-          <div className="grid grid-cols-7 gap-2 mb-3">
-            {DAY_LABELS.map((label, i) => {
-              const isToday = isCurrentWeek && i === todayDay;
-              const hasEvents = dayHasEvents(i);
-              return (
-                <button
-                  key={i}
-                  onClick={() => {
-                    setSelectedDay(i);
-                    setViewMode("day");
-                  }}
-                  className={`text-center py-2 rounded-lg transition-colors cursor-pointer hover:bg-white/5 relative ${
-                    isToday ? "text-white" : "text-white/40"
-                  }`}
-                >
-                  <div className="text-xs font-medium">{label}</div>
-                  <div className={`text-[10px] ${isToday ? "text-white/60" : "text-white/20"}`}>
-                    {formatDayDate(currentWeekStart, i)}
+          <div className="hidden md:block">
+            {/* Day column headers */}
+            <div className="grid grid-cols-7 gap-2 mb-3">
+              {DAY_LABELS.map((label, i) => {
+                const isToday = isCurrentWeek && i === todayDay;
+                const hasEvents = dayHasEvents(i);
+                return (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setSelectedDay(i);
+                      setViewMode("day");
+                    }}
+                    className={`text-center py-2 rounded-lg transition-colors cursor-pointer hover:bg-white/5 relative ${
+                      isToday ? "text-white" : "text-white/40"
+                    }`}
+                  >
+                    <div className="text-xs font-medium">{label}</div>
+                    <div className={`text-[10px] ${isToday ? "text-white/60" : "text-white/20"}`}>
+                      {formatDayDate(currentWeekStart, i)}
+                    </div>
+                    {hasEvents && (
+                      <span className="absolute top-1 right-2 h-1.5 w-1.5 rounded-full bg-blue-400" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Day columns with events */}
+            <div className="grid grid-cols-7 gap-2">
+              {Array.from({ length: 7 }, (_, dayIdx) => {
+                const weekly = eventsForDay(dayIdx);
+                const azura = azuraEventsForDay(dayIdx);
+                const hasWeekly = weekly.length > 0;
+
+                return (
+                  <div key={dayIdx} className="min-h-[80px] space-y-1.5">
+                    {hasWeekly ? (
+                      weekly.map((entry, idx) => renderWeeklyEvent(entry, idx, dayIdx, true))
+                    ) : azura.length > 0 ? (
+                      azura.map((entry, idx) => renderAzuraEvent(entry, idx, true))
+                    ) : (
+                      <div className="rounded border border-white/5 bg-white/[0.02] p-2 text-center">
+                        <p className="text-[10px] text-white/15">—</p>
+                      </div>
+                    )}
                   </div>
-                  {hasEvents && (
-                    <span className="absolute top-1 right-2 h-1.5 w-1.5 rounded-full bg-blue-400" />
-                  )}
-                </button>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
 
-          {/* Day columns with events */}
-          <div className="grid grid-cols-7 gap-2">
+          {/* Phone: vertical list of days (7 fixed columns don't fit 375px) */}
+          <div className="md:hidden space-y-5">
             {Array.from({ length: 7 }, (_, dayIdx) => {
               const weekly = eventsForDay(dayIdx);
               const azura = azuraEventsForDay(dayIdx);
-              const hasWeekly = weekly.length > 0;
+              const isToday = isCurrentWeek && dayIdx === todayDay;
 
               return (
-                <div key={dayIdx} className="min-h-[80px] space-y-1.5">
-                  {hasWeekly ? (
-                    weekly.map((entry, idx) => renderWeeklyEvent(entry, idx, dayIdx, true))
-                  ) : azura.length > 0 ? (
-                    azura.map((entry, idx) => renderAzuraEvent(entry, idx, true))
-                  ) : (
-                    <div className="rounded border border-white/5 bg-white/[0.02] p-2 text-center">
-                      <p className="text-[10px] text-white/15">—</p>
-                    </div>
-                  )}
+                <div key={dayIdx}>
+                  <button
+                    onClick={() => {
+                      setSelectedDay(dayIdx);
+                      setViewMode("day");
+                    }}
+                    className={`mb-2 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors hover:bg-white/5 ${
+                      isToday ? "bg-white/5 text-white" : "text-white/50"
+                    }`}
+                  >
+                    <span className="text-sm font-medium">
+                      {DAY_LABELS[dayIdx]}{" "}
+                      <span className={isToday ? "text-white/60" : "text-white/25"}>
+                        {formatDayDate(currentWeekStart, dayIdx)}
+                      </span>
+                    </span>
+                    {dayHasEvents(dayIdx) && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+                    )}
+                  </button>
+                  <div className="space-y-1.5">
+                    {weekly.length > 0 ? (
+                      weekly.map((entry, idx) => renderWeeklyEvent(entry, idx, dayIdx, true))
+                    ) : azura.length > 0 ? (
+                      azura.map((entry, idx) => renderAzuraEvent(entry, idx, true))
+                    ) : (
+                      <div className="rounded border border-white/5 bg-white/[0.02] p-2 text-center">
+                        <p className="text-[10px] text-white/15">—</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })}

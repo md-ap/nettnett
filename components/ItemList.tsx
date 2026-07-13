@@ -24,6 +24,22 @@ interface UploadItem {
 
 const ITEMS_PER_PAGE = 10;
 
+// Windowed pagination: 1 … c-1 c c+1 … total (≤7 numeric buttons, fits 375px)
+function pageWindow(current: number, total: number): (number | "ellipsis")[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages = [...new Set([1, current - 1, current, current + 1, total])]
+    .filter((p) => p >= 1 && p <= total)
+    .sort((a, b) => a - b);
+  const out: (number | "ellipsis")[] = [];
+  let prev = 0;
+  for (const p of pages) {
+    if (p - prev > 1) out.push("ellipsis");
+    out.push(p);
+    prev = p;
+  }
+  return out;
+}
+
 /* ── Chevron Icon ── */
 function ChevronIcon({ expanded }: { expanded: boolean }) {
   return (
@@ -980,7 +996,7 @@ export default function ItemList({
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 pt-2">
+        <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
           <button
             onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
             disabled={currentPage === 1}
@@ -989,19 +1005,25 @@ export default function ItemList({
             Previous
           </button>
 
-          {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-            <button
-              key={page}
-              onClick={() => setCurrentPage(page)}
-              className={`rounded px-3 py-2 text-sm transition-colors ${
-                page === currentPage
-                  ? "bg-white text-black font-semibold"
-                  : "text-white/60 hover:bg-white/10"
-              }`}
-            >
-              {page}
-            </button>
-          ))}
+          {pageWindow(currentPage, totalPages).map((page, i) =>
+            page === "ellipsis" ? (
+              <span key={`ellipsis-${i}`} className="px-2 text-sm text-white/30">
+                …
+              </span>
+            ) : (
+              <button
+                key={page}
+                onClick={() => setCurrentPage(page)}
+                className={`rounded px-3 py-2 text-sm transition-colors ${
+                  page === currentPage
+                    ? "bg-white text-black font-semibold"
+                    : "text-white/60 hover:bg-white/10"
+                }`}
+              >
+                {page}
+              </button>
+            )
+          )}
 
           <button
             onClick={() =>
