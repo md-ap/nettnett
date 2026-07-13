@@ -10,9 +10,10 @@ NettNett is a radio streaming platform and file management system built with Nex
 **Page structure:**
 - `/` — Public radio player (no login required)
 - `/about`, `/curators`, `/participate`, `/program` — Public pages (route group `(public)`)
-- `/login` — Auth page (login/register)
-- `/dashboard` — Member panel (upload/manage files, requires login)
-- `/management` — Radio management (requires `can_manage` or admin; exclusive-lock sessions)
+- `/login` — Auth page (login/register, Turnstile on register)
+- `/forgot-password`, `/reset-password`, `/verify-email` — Public auth flows
+- `/dashboard` — Member panel (upload/manage files; `user` role sees an access-request notice instead)
+- `/management` — Radio management (`management`/`admin` roles; exclusive-lock sessions)
 - `/admin` — User administration (admin role only)
 
 ---
@@ -65,8 +66,12 @@ nettnett/
 ├── app/
 │   ├── (public)/                    # about, curators, participate, program
 │   ├── (admin)/                     # dashboard, management, admin
+│   ├── forgot-password/ reset-password/ verify-email/   # public auth pages
 │   ├── api/
-│   │   ├── auth/                    # register, login, logout, session
+│   │   ├── auth/                    # register, login, logout, session,
+│   │   │                            # forgot-password, reset-password,
+│   │   │                            # verify-email, resend-verification
+│   │   ├── request-access/route.ts  # "user" role requests a role (emails admin)
 │   │   ├── files/                   # presign, finalize, upload, delete, list,
 │   │   │                            # update, send-to-ia
 │   │   ├── radio/
@@ -92,8 +97,12 @@ nettnett/
 │   ├── RecordingsManager.tsx        # Recordings list + IA publish + delete
 │   ├── UploadForm.tsx / ItemList.tsx / RichTextEditor.tsx
 │   ├── AdminPanel.tsx / ManagementGate.tsx / AuthForm.tsx / Navbar.tsx
+│   ├── RequestAccess.tsx            # Access-request notice for "user" role
+│   ├── Turnstile.tsx                # Cloudflare Turnstile widget (dark)
 ├── lib/
-│   ├── db.ts / db-init.ts / auth.ts
+│   ├── db.ts / db-init.ts / auth.ts # auth.ts: role helpers + getDbRole
+│   ├── email.ts                     # Resend + branded templates (Spanish)
+│   ├── turnstile.ts                 # Server-side Turnstile verification
 │   ├── b2.ts                        # Public bucket (uploads, presigned PUTs)
 │   ├── b2-recordings.ts             # Private recordings bucket (presigned GETs)
 │   ├── internet-archive.ts          # IA S3 API via native https (LOW auth)
@@ -135,6 +144,15 @@ IA_S3_SECRET_KEY=...
 NEXT_PUBLIC_AZURACAST_URL=https://radionettnettstream.com
 AZURACAST_API_KEY=...        # admin API key created on the Hetzner AzuraCast
 AZURACAST_STATION_ID=1
+
+# Resend (transactional email) — resend.dev sender until the real domain is verified
+RESEND_API_KEY=...
+EMAIL_FROM=NettNett Radio <onboarding@resend.dev>
+ADMIN_NOTIFY_EMAIL=quetelapongo@proton.me   # receives access-request notifications
+
+# Cloudflare Turnstile (anti-bot on register / forgot-password / resend-verification)
+NEXT_PUBLIC_TURNSTILE_SITE_KEY=...          # build-time! registered for nettnett.vercel.app
+TURNSTILE_SECRET_KEY=...
 
 # NAS Sync Webhook (legacy backup, via Cloudflare Named Tunnel)
 NAS_WEBHOOK_URL=https://sync.radionettnettstream.com/sync
@@ -185,12 +203,44 @@ Pre-existing features: playlist CRUD + song assignment by B2 path, weekly schedu
 
 ---
 
+## Auth, Roles & Email
+
+### Role ladder (single `role` column; legacy `can_manage` superseded)
+| Role | Upload files | Radio management | Admin panel |
+|------|:---:|:---:|:---:|
+| `user` (default on register) | ❌ dashboard shows access-request notice + button (emails `ADMIN_NOTIFY_EMAIL`) | ❌ | ❌ |
+| `uploader` | ✅ | ❌ | ❌ |
+| `management` | ✅ | ✅ | ❌ |
+| `admin` | ✅ | ✅ | ✅ |
+
+- **Guards read the role FRESH from the DB** (`getDbRole` in `lib/auth.ts`) — an admin's role change applies on the user's next request, no re-login. The JWT `role`/`canManage` claims are login-time snapshots only.
+- Helpers: `canUpload(role)`, `canManageRadio(role)`. Guarded APIs: all `/api/files/*` mutations, `/api/radio`, `/api/recordings`, `/api/management/session` (GET+POST).
+- One-shot migrations tracked in `public.migration_log` (e.g. `roles_overhaul`: can_manage→management, old plain users→uploader).
+- Admin panel: Role dropdown per user, Verified yes/no toggle, Add User modal picks a role (admin-created users are auto-verified).
+
+### Email verification
+- Registration sends a combined welcome+verify email (48h token, `public.email_verification_tokens`); the account works immediately but **deactivates after a 7-day grace period** if unverified (login returns 403 + `needsVerification` flag → link to `/verify-email`, which verifies from the token or resends the link).
+- Admins can verify/unverify manually from the admin panel (`PATCH /api/admin/users/[id]/verify`).
+- Existing users were grandfathered as verified.
+
+### Transactional email (Resend)
+- `lib/email.ts` — Resend via plain REST; branded dark layout ("nnr" wordmark, Helvetica, Spanish copy). Templates: welcome+verify, password reset, access request notification.
+- **Sandbox limitation:** with the `onboarding@resend.dev` sender, Resend only delivers to the Resend account owner's email. Real delivery to all users requires verifying the future domain (`nettnettradio.com`) in Resend, then updating `EMAIL_FROM`.
+- Password reset: `/forgot-password` → SHA-256-hashed token (1h, `public.password_reset_tokens`) → `/reset-password?token=`. Anti-enumeration on both forgot and resend endpoints.
+
+### Turnstile (anti-bot)
+- On register, forgot-password, and resend-verification. `components/Turnstile.tsx` renders nothing (and `lib/turnstile.ts` skips verification) when the keys are unset — local dev keeps working.
+- Site key is registered for `nettnett.vercel.app`; add `localhost` to the widget's allowed domains in the Cloudflare dashboard for local testing.
+
+---
+
 ## Services Configuration
 
 ### NileDB (PostgreSQL)
 - SSL required; **always use explicit `public.` schema** (NileDB has a built-in `users` table in its own schema)
-- Tables: `public.users` (+ `role`, `can_manage` columns), `public.items`, `public.management_sessions`, legacy `public.files`
+- Tables: `public.users` (+ `role`, `email_verified` columns), `public.items`, `public.management_sessions`, `public.password_reset_tokens`, `public.email_verification_tokens`, `public.migration_log`, legacy `public.files`
 - Setup/migrations: `GET /api/setup` (idempotent)
+- ⚠️ **Local `.env.local` and Vercel point at the SAME database** — migrations run locally are live in production immediately
 
 ### Backblaze B2
 - SDK: `@aws-sdk/client-s3` with `forcePathStyle: true` (required for B2)
@@ -224,6 +274,7 @@ Git remote: `git@github.com:md-ap/nettnett.git` (SSH as `md-ap`). Vercel auto-de
 
 ## Known Issues & Notes
 
+- **Resend sandbox:** emails only deliver to the Resend account owner until the domain is verified (see Auth section) — new users won't receive verification/reset emails yet; admins can verify them manually from the admin panel
 - **Remote streams show no metadata natively** — mitigated app-side via `/api/radio/broadcast-status` override (see URL Broadcast section)
 - **IA deletes are async** — items linger on archive.org for hours after deletion
 - **Bots hammer the SFTP port (2022)** on the Hetzner box — pending: Hetzner Cloud Firewall (allow 22/80/443 only; SFTP unused since media lives in B2)
