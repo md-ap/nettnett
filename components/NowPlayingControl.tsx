@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import Spinner from "@/components/ui/Spinner";
+import { radioPost } from "@/lib/radio-client";
 
 interface SongInfo {
   title: string;
@@ -21,7 +23,8 @@ interface NowPlayingData {
 async function enrichSong(
   idTagTitle: string,
   idTagArtist: string,
-  songPath: string
+  songPath: string,
+  signal?: AbortSignal
 ): Promise<SongInfo> {
   let title = idTagTitle || "Unknown Track";
   let artist = idTagArtist;
@@ -36,12 +39,13 @@ async function enrichSong(
 
   if (metaUrl) {
     try {
-      const res = await fetch(metaUrl, { cache: "no-store" });
+      const res = await fetch(metaUrl, { cache: "no-store", signal });
       const meta = await res.json();
       if (meta.title) title = meta.title;
       if (meta.creator) artist = meta.creator;
       if (meta.artUrl) art = meta.artUrl;
-    } catch {
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") throw e;
       // Keep ID3 tag values
     }
   }
@@ -53,13 +57,14 @@ export default function NowPlayingControl() {
   const [data, setData] = useState<NowPlayingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState("");
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchNowPlaying = useCallback(async () => {
+  const fetchNowPlaying = useCallback(async (signal?: AbortSignal) => {
     try {
       const [npRes, statusRes, bcRes] = await Promise.all([
-        fetch("/api/radio?endpoint=nowplaying", { cache: "no-store" }),
-        fetch("/api/radio?endpoint=status", { cache: "no-store" }),
-        fetch("/api/radio/broadcast-status", { cache: "no-store" }).catch(() => null),
+        fetch("/api/radio?endpoint=nowplaying", { cache: "no-store", signal }),
+        fetch("/api/radio?endpoint=status", { cache: "no-store", signal }),
+        fetch("/api/radio/broadcast-status", { cache: "no-store", signal }).catch(() => null),
       ]);
       const json = await npRes.json();
       const status = await statusRes.json();
@@ -103,9 +108,9 @@ export default function NowPlayingControl() {
 
       // Enrich current and next songs with NileDB metadata in parallel
       const [current, next] = await Promise.all([
-        enrichSong(song.title || "", song.artist || "", song.path || ""),
+        enrichSong(song.title || "", song.artist || "", song.path || "", signal),
         nextData
-          ? enrichSong(nextData.title || "", nextData.artist || "", nextData.path || "")
+          ? enrichSong(nextData.title || "", nextData.artist || "", nextData.path || "", signal)
           : Promise.resolve(null),
       ]);
 
@@ -118,30 +123,40 @@ export default function NowPlayingControl() {
         elapsed: np.elapsed || 0,
         duration: np.duration || 0,
       });
-    } catch {
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") return;
       setData((prev) =>
         prev ? { ...prev, isOnline: false } : null
       );
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchNowPlaying();
-    const interval = setInterval(fetchNowPlaying, 10000);
-    return () => clearInterval(interval);
+    const controller = new AbortController();
+    fetchNowPlaying(controller.signal);
+    const interval = setInterval(() => fetchNowPlaying(controller.signal), 10000);
+    return () => {
+      clearInterval(interval);
+      controller.abort();
+    };
   }, [fetchNowPlaying]);
+
+  // Clear any pending post-action refresh timer on unmount
+  useEffect(
+    () => () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    },
+    []
+  );
 
   async function handleAction(action: string) {
     setActionLoading(action);
     try {
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
-      setTimeout(fetchNowPlaying, 2000);
+      await radioPost({ action });
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(fetchNowPlaying, 2000);
     } catch (err) {
       console.error("Action failed:", err);
     } finally {
@@ -225,7 +240,7 @@ export default function NowPlayingControl() {
 
       {loading ? (
         <div className="flex items-center justify-center py-8">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+          <Spinner />
         </div>
       ) : (
         <>
@@ -279,7 +294,7 @@ export default function NowPlayingControl() {
                 title="Stop Stream"
               >
                 {actionLoading === "stop" ? (
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-400/30 border-t-red-400" />
+                  <Spinner size="sm" colorClass="border-red-400/30 border-t-red-400" className="h-4 w-4" />
                 ) : (
                   <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
                     <rect x="6" y="6" width="12" height="12" rx="1" />
@@ -295,7 +310,7 @@ export default function NowPlayingControl() {
                 title="Start Stream"
               >
                 {actionLoading === "start" ? (
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-green-400/30 border-t-green-400" />
+                  <Spinner size="sm" colorClass="border-green-400/30 border-t-green-400" className="h-4 w-4" />
                 ) : (
                   <svg className="ml-0.5 h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
                     <polygon points="5,3 19,12 5,21" />
@@ -314,7 +329,7 @@ export default function NowPlayingControl() {
                 title="Skip Song"
               >
                 {actionLoading === "skip" ? (
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+                  <Spinner size="sm" className="h-4 w-4" />
                 ) : (
                   <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
                     <polygon points="5,3 15,12 5,21" />
@@ -332,7 +347,7 @@ export default function NowPlayingControl() {
               title="Restart Station"
             >
               {actionLoading === "restart" ? (
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+                <Spinner size="sm" className="h-4 w-4" />
               ) : (
                 <svg className="h-4 w-4 text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path d="M1 4v6h6M23 20v-6h-6" />

@@ -10,11 +10,13 @@ NettNett is a radio streaming platform and file management system built with Nex
 **Page structure:**
 - `/` — Public radio player (no login required)
 - `/about`, `/curators`, `/participate`, `/program` — Public pages (route group `(public)`)
-- `/login` — Auth page (login/register, Turnstile on register)
+- `/login` — Auth page (login/register, Turnstile on both)
 - `/forgot-password`, `/reset-password`, `/verify-email` — Public auth flows
 - `/dashboard` — Member panel (upload/manage files; `user` role sees an access-request notice instead)
 - `/management` — Radio management (`management`/`admin` roles; exclusive-lock sessions)
 - `/admin` — User administration (admin role only)
+
+**App shell:** one unified `Navbar` everywhere (logo + public links left; logged-in users get a user dropdown with Dashboard/Management/Admin/Logout, role-gated; hamburger on mobile). The stream player is a `FloatingPlayer` pill fixed bottom-right (minimizable), mounted once in the root layout — hidden on `/` (the home IS the big player) and on the minimal auth pages. Audio survives navigation (RadioProvider in root layout).
 
 ---
 
@@ -24,7 +26,8 @@ NettNett is a radio streaming platform and file management system built with Nex
 User (Browser)
   │
   ├── Vercel (Next.js App)
-  │     ├── Auth (JWT + httpOnly cookies, roles: user/admin + can_manage)
+  │     ├── Auth (JWT + httpOnly cookies; roles user/uploader/management/admin
+  │     │        enforced FRESH from DB via requireRole — fail-closed)
   │     ├── API Routes (upload, radio proxy, recordings, admin)
   │     ├── Dashboard / Management / Admin UI
   │     └── Native Live Studio (Webcast protocol over WebSocket)
@@ -34,7 +37,9 @@ User (Browser)
   │
   ├── Backblaze B2 (S3-compatible)
   │     ├── nettnett1 (PUBLIC) — member uploads + radio media library
-  │     │     └── user_firstname_lastname/item-title/files + metadata.json
+  │     │     └── {users.b2_folder}/item-title/files + metadata.json
+  │     │         (folder allocated once at registration, UNIQUE — never
+  │     │          re-derived from the non-unique first/last name)
   │     └── nettnett-recordings (PRIVATE) — live session recordings
   │           └── {dj_username}/stream_YYYYMMDD-HHMMSS.mp3 (+ .ia.json sidecars)
   │
@@ -72,8 +77,8 @@ nettnett/
 │   │   │                            # forgot-password, reset-password,
 │   │   │                            # verify-email, resend-verification
 │   │   ├── request-access/route.ts  # "user" role requests a role (emails admin)
-│   │   ├── files/                   # presign, finalize, upload, delete, list,
-│   │   │                            # update, send-to-ia
+│   │   ├── files/                   # presign, finalize, delete, list,
+│   │   │                            # update, send-to-ia (all canUpload-gated)
 │   │   ├── radio/
 │   │   │   ├── route.ts             # Authenticated proxy to AzuraCast API
 │   │   │   │                        # (playlists, streamers, URL broadcast actions)
@@ -83,10 +88,12 @@ nettnett/
 │   │   ├── recordings/route.ts      # List/play/delete recordings + send to IA
 │   │   ├── admin/users/...          # Admin user management
 │   │   ├── management/session/      # Exclusive management lock (5min timeout)
-│   │   └── setup/route.ts           # One-time DB table creation + migrations
+│   │   └── setup/route.ts           # Idempotent DB setup + migrations
+│   │                                # (ADMIN-gated; open only on fresh install)
 │   ├── login/  ├── globals.css  └── layout.tsx / page.tsx
 ├── components/
-│   ├── RadioPlayer.tsx / RadioProvider.tsx / NavMiniPlayer.tsx
+│   ├── RadioPlayer.tsx / RadioProvider.tsx / FloatingPlayer.tsx
+│   ├── ui/                          # Spinner, Modal, Button, Field primitives
 │   ├── ManagementTabs.tsx           # Stream | URL Broadcast | Playlists |
 │   │                                # Calendar | Streamers | Recordings
 │   ├── NowPlayingControl.tsx / PlaylistManager.tsx / ScheduleCalendar.tsx
@@ -96,17 +103,26 @@ nettnett/
 │   ├── UrlBroadcast.tsx             # Instant + scheduled URL broadcasts
 │   ├── RecordingsManager.tsx        # Recordings list + IA publish + delete
 │   ├── UploadForm.tsx / ItemList.tsx / RichTextEditor.tsx
-│   ├── AdminPanel.tsx / ManagementGate.tsx / AuthForm.tsx / Navbar.tsx
+│   ├── AdminPanel.tsx / ManagementGate.tsx / AuthForm.tsx
+│   ├── Navbar.tsx                   # Unified nav (optional initialSession prop;
+│   │                                # admin layout passes it, public self-fetches)
 │   ├── RequestAccess.tsx            # Access-request notice for "user" role
 │   ├── Turnstile.tsx                # Cloudflare Turnstile widget (dark)
 ├── lib/
-│   ├── db.ts / db-init.ts / auth.ts # auth.ts: role helpers + getDbRole
+│   ├── db.ts / db-init.ts / auth.ts # auth.ts: requireRole (fresh-DB, fail-closed),
+│   │                                # getDbRole (display-only), hashToken, helpers
+│   ├── user-folder.ts               # allocateB2Folder for new users
+│   ├── constants.ts / format.ts / schedule.ts   # client-safe shared consts/helpers
+│   ├── radio-client.ts              # postJson/radioPost/radioGet (AbortSignal)
+│   ├── http-retry.ts / nas-webhook.ts  # webhook retry + NAS backup triggers
+│   ├── app-url.ts                   # trusted APP_URL for emailed links
+│   ├── url-guard.ts                 # SSRF guard (isPublicHttpUrl)
 │   ├── email.ts                     # Resend + branded templates (Spanish)
 │   ├── turnstile.ts                 # Server-side Turnstile verification
-│   ├── b2.ts                        # Public bucket (uploads, presigned PUTs)
+│   ├── b2.ts                        # Public bucket + titleToFolder/sanitizeFileName
 │   ├── b2-recordings.ts             # Private recordings bucket (presigned GETs)
 │   ├── internet-archive.ts          # IA S3 API via native https (LOW auth)
-│   ├── audio-duration.ts            # Remote MP3 duration+title detection
+│   ├── audio-duration.ts            # Remote MP3 duration+title detection (SSRF-guarded)
 │   └── webcaster.ts                 # Browser→harbor live streaming (Webcast)
 ├── middleware.ts                    # Route protection (cookie presence)
 ├── nas/                             # Legacy NAS webhook + tunnel config
@@ -150,7 +166,11 @@ RESEND_API_KEY=...
 EMAIL_FROM=NettNett Radio <onboarding@resend.dev>
 ADMIN_NOTIFY_EMAIL=quetelapongo@proton.me   # receives access-request notifications
 
-# Cloudflare Turnstile (anti-bot on register / forgot-password / resend-verification)
+# App base URL for emailed links (verification/reset/admin CTA) — never the Host header
+APP_URL=https://nettnett.vercel.app
+
+# Cloudflare Turnstile (anti-bot on register / LOGIN / forgot-password / resend-verification)
+# REQUIRED in production: missing secret now fails closed (dev without keys still skips)
 NEXT_PUBLIC_TURNSTILE_SITE_KEY=...          # build-time! registered for nettnett.vercel.app
 TURNSTILE_SECRET_KEY=...
 
@@ -213,13 +233,16 @@ Pre-existing features: playlist CRUD + song assignment by B2 path, weekly schedu
 | `management` | ✅ | ✅ | ❌ |
 | `admin` | ✅ | ✅ | ✅ |
 
-- **Guards read the role FRESH from the DB** (`getDbRole` in `lib/auth.ts`) — an admin's role change applies on the user's next request, no re-login. The JWT `role`/`canManage` claims are login-time snapshots only.
-- Helpers: `canUpload(role)`, `canManageRadio(role)`. Guarded APIs: all `/api/files/*` mutations, `/api/radio`, `/api/recordings`, `/api/management/session` (GET+POST).
-- One-shot migrations tracked in `public.migration_log` (e.g. `roles_overhaul`: can_manage→management, old plain users→uploader).
-- Admin panel: Role dropdown per user, Verified yes/no toggle, Add User modal picks a role (admin-created users are auto-verified).
+- **API guards use `requireRole(predicate)` (`lib/auth.ts`)** — ONE fresh DB read per request returning `{ session, role, b2Folder }`. Fail-closed: DB error → 503, deleted user with live JWT → 401. JWT `role`/`canManage` claims are never trusted for authorization. `getDbRole` remains for DISPLAY-ONLY spots (`/api/auth/session`, server pages) where a DB blip shouldn't log the UI out.
+- Guarded APIs: all `/api/files/*` (incl. `list`) with `canUpload`; `/api/radio`, `/api/recordings`, `/api/management/session` with `canManageRadio`; all `/api/admin/*` with `isAdmin`; `request-access` authenticated + fresh role. `/api/auth/session` returns the FRESH role so the navbar gates links without re-login.
+- **B2 tenant isolation:** each user gets a unique `users.b2_folder` allocated at registration (`lib/user-folder.ts`, name-derived + suffix on collision). Routes read `auth.b2Folder`; the folder is NEVER re-derived from the (non-unique) name. Backfill migration `migrateB2Folder` used the byte-identical legacy derivation so existing folders/AzuraCast paths kept working.
+- Files input hardening: presign re-derives `titleToFolder(title)` and sanitizes file names (basename, control chars stripped, 180-char cap, ≤25 files); finalize 400s if the client `titleFolder` mismatches; delete/update/send-to-ia validate the folder slug shape.
+- One-shot migrations tracked in `public.migration_log` (e.g. `roles_overhaul`: can_manage→management, old plain users→uploader). The `can_manage` column still exists but no code reads it.
+- Admin panel: Role dropdown per user, Verified yes/no toggle, Add User modal picks a role (admin-created users are auto-verified); mobile shows cards instead of the table.
 
 ### Email verification
-- Registration sends a combined welcome+verify email (48h token, `public.email_verification_tokens`); the account works immediately but **deactivates after a 7-day grace period** if unverified (login returns 403 + `needsVerification` flag → link to `/verify-email`, which verifies from the token or resends the link).
+- Registration sends a combined welcome+verify email (7-day token, `public.email_verification_tokens` — matches the copy and the grace period); the account works immediately but **deactivates after a 7-day grace period** if unverified (login returns 403 + `needsVerification` flag → link to `/verify-email`, which verifies from the token or resends the link).
+- Emailed links are built from `APP_URL` (`lib/app-url.ts`), never from the request Host header (host-spoofing would redirect valid tokens to an attacker domain).
 - Admins can verify/unverify manually from the admin panel (`PATCH /api/admin/users/[id]/verify`).
 - Existing users were grandfathered as verified.
 
@@ -229,7 +252,8 @@ Pre-existing features: playlist CRUD + song assignment by B2 path, weekly schedu
 - Password reset: `/forgot-password` → SHA-256-hashed token (1h, `public.password_reset_tokens`) → `/reset-password?token=`. Anti-enumeration on both forgot and resend endpoints.
 
 ### Turnstile (anti-bot)
-- On register, forgot-password, and resend-verification. `components/Turnstile.tsx` renders nothing (and `lib/turnstile.ts` skips verification) when the keys are unset — local dev keeps working.
+- On register, **login**, forgot-password, and resend-verification. `components/Turnstile.tsx` renders nothing when the keys are unset, and `lib/turnstile.ts` skips verification **only outside production** — a missing secret in prod rejects requests instead of silently disabling protection.
+- Tokens are single-use: `AuthForm` remounts the widget (key bump) after a failed submit.
 - Site key is registered for `nettnett.vercel.app`; add `localhost` to the widget's allowed domains in the Cloudflare dashboard for local testing.
 
 ---
@@ -238,15 +262,15 @@ Pre-existing features: playlist CRUD + song assignment by B2 path, weekly schedu
 
 ### NileDB (PostgreSQL)
 - SSL required; **always use explicit `public.` schema** (NileDB has a built-in `users` table in its own schema)
-- Tables: `public.users` (+ `role`, `email_verified` columns), `public.items`, `public.management_sessions`, `public.password_reset_tokens`, `public.email_verification_tokens`, `public.migration_log`, legacy `public.files`
-- Setup/migrations: `GET /api/setup` (idempotent)
+- Tables: `public.users` (+ `role`, `email_verified`, `b2_folder` UNIQUE columns), `public.items`, `public.management_sessions`, `public.password_reset_tokens`, `public.email_verification_tokens`, `public.migration_log`, legacy `public.files` (no longer created or read)
+- Setup/migrations: `GET /api/setup` (idempotent; **admin-gated** — open only on a fresh install with no users)
 - ⚠️ **Local `.env.local` and Vercel point at the SAME database** — migrations run locally are live in production immediately
 
 ### Backblaze B2
 - SDK: `@aws-sdk/client-s3` with `forcePathStyle: true` (required for B2)
 - `nettnett1` (public): browser uploads via presigned PUT URLs (`/api/files/presign` → direct upload → `/api/files/finalize`), bypassing Vercel's 4.5MB limit. Public URL: `https://f004.backblazeb2.com/file/nettnett1/{key}`
 - `nettnett-recordings` (private): AzuraCast writes; app reads via presigned GETs
-- File listing for the dashboard comes from B2 directly (`listUserItems`), not the DB
+- File listing for the dashboard comes from B2 directly (`listUserItems(auth.b2Folder)`), not the DB
 
 ### Internet Archive
 - S3-like API at `s3.us.archive.org`, `Authorization: LOW key:secret`
@@ -254,7 +278,7 @@ Pre-existing features: playlist CRUD + song assignment by B2 path, weekly schedu
 - Deletes are queued and slow (hours/days); `x-archive-cascade-delete: 1`
 
 ### Management sessions
-- Exclusive lock: only one user edits the radio at a time (`public.management_sessions`, 5-min inactivity timeout, kick/release/heartbeat via `/api/management/session`)
+- Exclusive lock: only one user edits the radio at a time (`public.management_sessions`, 5-min inactivity timeout, kick/release/heartbeat via `/api/management/session`). The claim runs in a transaction; a concurrent claim returns 409 (partial unique index on `is_active`).
 
 ---
 
@@ -263,7 +287,8 @@ Pre-existing features: playlist CRUD + song assignment by B2 path, weekly schedu
 ```bash
 npm install
 npm run dev          # usually http://localhost:3001 (3000 taken by other projects)
-# First-time DB setup: visit /api/setup
+# First-time DB setup: visit /api/setup (admin-gated once users exist;
+# open only while the users table is missing/empty)
 npm run build
 npx tsc --noEmit     # typecheck
 ```
@@ -280,14 +305,15 @@ Git remote: `git@github.com:md-ap/nettnett.git` (SSH as `md-ap`). Vercel auto-de
 - **Bots hammer the SFTP port (2022)** on the Hetzner box — pending: Hetzner Cloud Firewall (allow 22/80/443 only; SFTP unused since media lives in B2)
 - **Crossfade set to `none`** during debugging (was not the culprit) — can be re-enabled via station backend_config
 - **CPX12 is the smallest viable size** — if Liquidsoap struggles under load, rescale to CPX22 with "CPU/RAM only" (keeps the change reversible)
-- **NAS decommission pending** — the `sync.` webhook still fires after uploads (harmless local backup); the old NAS AzuraCast and `radio.` tunnel hostname can be retired
-- **Legacy components:** `FileUploadZone.tsx` / `FileList.tsx` superseded by `UploadForm.tsx` / `ItemList.tsx`
-- Middleware only checks cookie presence (JWT not verifiable in Edge runtime); full verification happens server-side
+- **NAS decommission pending** — the `sync.` webhook still fires after uploads (harmless local backup, `lib/nas-webhook.ts`); the old NAS AzuraCast and `radio.` tunnel hostname can be retired
+- Middleware only checks cookie presence (JWT not verifiable in Edge runtime); full verification happens server-side (requireRole per route)
+- **SSRF guard scope:** `lib/url-guard.ts` blocks private/internal targets for URL-broadcast duration detection; DNS rebinding is out of scope (callers are management-gated)
 
 ---
 
 ## Deployment (Vercel)
 
-1. Push to `main` → auto-deploy
-2. Env vars live in the Vercel dashboard (remember: `NEXT_PUBLIC_*` changes need a Redeploy)
-3. `/api/setup` once after DB changes (idempotent migrations)
+1. **Before pushing schema-affecting changes:** add/confirm env vars in Vercel (`APP_URL`, `TURNSTILE_SECRET_KEY` + `NEXT_PUBLIC_TURNSTILE_SITE_KEY` are hard-required in prod), then run `GET /api/setup` **locally first** — local and prod share the same NileDB, and old prod code ignores new columns, so migrating before the deploy is the safe order.
+2. Push to `main` → auto-deploy
+3. Env vars live in the Vercel dashboard (remember: `NEXT_PUBLIC_*` changes need a Redeploy)
+4. After deploy: a **logged-in admin** visits `/api/setup` once (idempotent; the endpoint is admin-gated now)

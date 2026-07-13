@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { radioGet, radioPost } from "@/lib/radio-client";
 
 interface ScheduleItem {
   start_time: number;
@@ -18,6 +19,13 @@ interface UrlBroadcastItem {
   is_enabled: boolean;
   remote_url: string | null;
   schedule_items: ScheduleItem[];
+}
+
+// Fields the broadcast actions return that the success messages use
+interface BroadcastActionResult {
+  name?: string;
+  durationMinutes?: number;
+  detectedSource?: string;
 }
 
 const DURATION_OPTIONS = [
@@ -59,44 +67,56 @@ export default function UrlBroadcast() {
   const instantActive = instant && instant.is_enabled ? instant : null;
   const scheduled = items.filter((i) => !i.is_instant);
 
-  const fetchStatus = useCallback(async () => {
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchStatus = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch("/api/radio?endpoint=url-broadcasts", { cache: "no-store" });
-      const data = await res.json();
+      const data = await radioGet<UrlBroadcastItem[]>("url-broadcasts", { signal });
       if (Array.isArray(data)) setItems(data);
-    } catch {
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") return;
       // best-effort refresh
     }
     try {
-      const res = await fetch("/api/radio?endpoint=nowplaying", { cache: "no-store" });
-      const data = await res.json();
+      const data = await radioGet<{
+        now_playing?: { song?: { title?: string; artist?: string } };
+      }>("nowplaying", { signal });
       const song = data?.now_playing?.song;
       setNowPlaying(song ? [song.title, song.artist].filter(Boolean).join(" — ") : "");
-    } catch {
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") return;
       // ignore
+    } finally {
+      if (!signal?.aborted) setStatusLoading(false);
     }
-    setStatusLoading(false);
   }, []);
 
   useEffect(() => {
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 15000);
-    return () => clearInterval(interval);
+    const controller = new AbortController();
+    fetchStatus(controller.signal);
+    const interval = setInterval(() => fetchStatus(controller.signal), 15000);
+    return () => {
+      clearInterval(interval);
+      controller.abort();
+    };
   }, [fetchStatus]);
+
+  // Clear any pending post-action refresh timer on unmount
+  useEffect(
+    () => () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    },
+    []
+  );
 
   const post = async (bodyObj: Record<string, unknown>, okText: string) => {
     setLoading(true);
     setMessage(null);
     try {
-      const res = await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bodyObj),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Request failed");
+      const data = await radioPost<BroadcastActionResult>(bodyObj);
       setMessage({ type: "ok", text: okText });
-      setTimeout(fetchStatus, 3000);
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(fetchStatus, 3000);
       setLoading(false);
       return data;
     } catch (e) {

@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import LiveStudio from "./LiveStudio";
+import Modal from "@/components/ui/Modal";
+import Spinner from "@/components/ui/Spinner";
+import { radioGet, radioPost } from "@/lib/radio-client";
 
 /* ─── Types ─── */
 interface Streamer {
@@ -42,41 +45,60 @@ export default function StreamerManager() {
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
 
+  // Per-row busy guard (toggle active / delete)
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const liveRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   /* ─── Fetch streamers ─── */
-  const fetchStreamers = useCallback(async () => {
+  const fetchStreamers = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch("/api/radio?endpoint=streamers", { cache: "no-store" });
-      const data = await res.json();
+      const data = await radioGet<Streamer[]>("streamers", { signal });
       if (Array.isArray(data)) {
         setStreamers(data);
       }
-    } catch {
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") return;
       setError("Failed to load streamers");
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
   /* ─── Fetch live status ─── */
-  const fetchLiveStatus = useCallback(async () => {
+  const fetchLiveStatus = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch(`${AZURACAST_URL}/api/nowplaying/nettnett`, { cache: "no-store" });
+      const res = await fetch(`${AZURACAST_URL}/api/nowplaying/nettnett`, {
+        cache: "no-store",
+        signal,
+      });
       const data = await res.json();
       setLiveInfo({
         isLive: data.live?.is_live || false,
         streamerName: data.live?.streamer_name || "",
       });
     } catch {
-      // Keep previous state
+      // Keep previous state (also swallows AbortError from unmount)
     }
   }, []);
 
   useEffect(() => {
-    fetchStreamers();
-    fetchLiveStatus();
-    const interval = setInterval(fetchLiveStatus, 10000);
-    return () => clearInterval(interval);
+    const controller = new AbortController();
+    fetchStreamers(controller.signal);
+    fetchLiveStatus(controller.signal);
+    const interval = setInterval(() => fetchLiveStatus(controller.signal), 10000);
+    return () => {
+      clearInterval(interval);
+      controller.abort();
+    };
   }, [fetchStreamers, fetchLiveStatus]);
+
+  // Clear any pending post-disconnect refresh timer on unmount
+  useEffect(
+    () => () => {
+      if (liveRefreshTimerRef.current) clearTimeout(liveRefreshTimerRef.current);
+    },
+    []
+  );
 
   /* ─── Form helpers ─── */
   function openCreateForm() {
@@ -123,33 +145,25 @@ export default function StreamerManager() {
 
     try {
       if (editingStreamer) {
-        await fetch("/api/radio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "update-streamer",
-            streamerId: editingStreamer.id,
-            displayName: formDisplayName.trim(),
-            username: formUsername.trim(),
-            password: formPassword || undefined,
-            isActive: formActive,
-            enforceSchedule: formEnforceSchedule,
-            comments: formComments.trim(),
-          }),
+        await radioPost({
+          action: "update-streamer",
+          streamerId: editingStreamer.id,
+          displayName: formDisplayName.trim(),
+          username: formUsername.trim(),
+          password: formPassword || undefined,
+          isActive: formActive,
+          enforceSchedule: formEnforceSchedule,
+          comments: formComments.trim(),
         });
       } else {
-        await fetch("/api/radio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "create-streamer",
-            displayName: formDisplayName.trim(),
-            username: formUsername.trim(),
-            password: formPassword,
-            isActive: formActive,
-            enforceSchedule: formEnforceSchedule,
-            comments: formComments.trim(),
-          }),
+        await radioPost({
+          action: "create-streamer",
+          displayName: formDisplayName.trim(),
+          username: formUsername.trim(),
+          password: formPassword,
+          isActive: formActive,
+          enforceSchedule: formEnforceSchedule,
+          comments: formComments.trim(),
         });
       }
 
@@ -164,16 +178,16 @@ export default function StreamerManager() {
 
   /* ─── Delete streamer ─── */
   async function handleDelete(id: number) {
+    if (busyId !== null) return;
+    setBusyId(id);
     try {
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete-streamer", streamerId: id }),
-      });
+      await radioPost({ action: "delete-streamer", streamerId: id });
       setConfirmDelete(null);
       await fetchStreamers();
     } catch {
       setError("Failed to delete streamer");
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -181,12 +195,9 @@ export default function StreamerManager() {
   async function handleDisconnect() {
     setDisconnecting(true);
     try {
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "disconnect-streamer" }),
-      });
-      setTimeout(fetchLiveStatus, 3000);
+      await radioPost({ action: "disconnect-streamer" });
+      if (liveRefreshTimerRef.current) clearTimeout(liveRefreshTimerRef.current);
+      liveRefreshTimerRef.current = setTimeout(fetchLiveStatus, 3000);
     } catch {
       setError("Failed to disconnect streamer");
     } finally {
@@ -196,26 +207,26 @@ export default function StreamerManager() {
 
   /* ─── Toggle active ─── */
   async function toggleActive(streamer: Streamer) {
+    if (busyId !== null) return;
+    setBusyId(streamer.id);
     try {
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "update-streamer",
-          streamerId: streamer.id,
-          isActive: !streamer.is_active,
-        }),
+      await radioPost({
+        action: "update-streamer",
+        streamerId: streamer.id,
+        isActive: !streamer.is_active,
       });
       await fetchStreamers();
     } catch {
       setError("Failed to update streamer");
+    } finally {
+      setBusyId(null);
     }
   }
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+        <Spinner />
       </div>
     );
   }
@@ -305,7 +316,8 @@ export default function StreamerManager() {
                 {/* Toggle active */}
                 <button
                   onClick={() => toggleActive(s)}
-                  className="rounded p-1.5 text-white/30 transition-colors hover:bg-white/10 hover:text-white/60"
+                  disabled={busyId === s.id}
+                  className="rounded p-1.5 text-white/30 transition-colors hover:bg-white/10 hover:text-white/60 disabled:opacity-50"
                   title={s.is_active ? "Deactivate" : "Activate"}
                 >
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -334,7 +346,8 @@ export default function StreamerManager() {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleDelete(s.id)}
-                      className="rounded px-2 py-1 text-xs text-red-400 transition-colors hover:bg-red-500/10"
+                      disabled={busyId === s.id}
+                      className="rounded px-2 py-1 text-xs text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
                     >
                       Confirm
                     </button>
@@ -388,8 +401,7 @@ export default function StreamerManager() {
 
       {/* ─── Create/Edit Modal ─── */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="w-full max-w-md rounded-lg border border-white/20 bg-black p-6">
+        <Modal onClose={closeForm} maxWidth="md">
             <h3 className="mb-4 text-lg font-semibold text-white">
               {editingStreamer ? "Edit DJ" : "Add DJ"}
             </h3>
@@ -485,7 +497,7 @@ export default function StreamerManager() {
               >
                 {formSaving ? (
                   <span className="flex items-center gap-2">
-                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                    <Spinner size="sm" colorClass="border-white/20 border-t-white" />
                     Saving...
                   </span>
                 ) : editingStreamer ? (
@@ -495,8 +507,7 @@ export default function StreamerManager() {
                 )}
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

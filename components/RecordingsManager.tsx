@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Modal from "@/components/ui/Modal";
+import { postJson } from "@/lib/radio-client";
+import { formatDuration, formatDate, formatFileSize } from "@/lib/format";
 
 interface RecordingItem {
   key: string;
@@ -11,30 +14,6 @@ interface RecordingItem {
   estimatedDurationSec: number;
   playUrl: string;
   ia: { identifier: string; url: string; sentAt: string } | null;
-}
-
-function formatDuration(sec: number): string {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function formatDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatSize(bytes: number): string {
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export default function RecordingsManager() {
@@ -49,19 +28,21 @@ export default function RecordingsManager() {
   const [iaTitle, setIaTitle] = useState("");
   const [iaDescription, setIaDescription] = useState("");
 
-  const fetchRecordings = useCallback(async () => {
+  const fetchRecordings = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch("/api/recordings", { cache: "no-store" });
+      const res = await fetch("/api/recordings", { cache: "no-store", signal });
       const data = await res.json();
       if (Array.isArray(data)) setRecordings(data);
     } catch {
-      // best-effort
+      // best-effort (aborted tab switches land here too)
     }
-    setLoading(false);
+    if (!signal?.aborted) setLoading(false);
   }, []);
 
   useEffect(() => {
-    fetchRecordings();
+    const controller = new AbortController();
+    fetchRecordings(controller.signal);
+    return () => controller.abort();
   }, [fetchRecordings]);
 
   const openIaModal = (rec: RecordingItem) => {
@@ -77,18 +58,12 @@ export default function RecordingsManager() {
     setBusyKey(iaTarget.key);
     setMessage(null);
     try {
-      const res = await fetch("/api/recordings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "send-to-ia",
-          key: iaTarget.key,
-          title: iaTitle,
-          description: iaDescription,
-        }),
+      await postJson("/api/recordings", {
+        action: "send-to-ia",
+        key: iaTarget.key,
+        title: iaTitle,
+        description: iaDescription,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to send to Internet Archive");
       setMessage({
         type: "ok",
         text: "Sent to Internet Archive. It may take a few minutes to appear publicly.",
@@ -116,13 +91,7 @@ export default function RecordingsManager() {
     setBusyKey(rec.key);
     setMessage(null);
     try {
-      const res = await fetch("/api/recordings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", key: rec.key }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to delete");
+      await postJson("/api/recordings", { action: "delete", key: rec.key });
       setMessage({ type: "ok", text: "Recording deleted." });
       fetchRecordings();
     } catch (e) {
@@ -194,7 +163,7 @@ export default function RecordingsManager() {
                   </div>
                   <p className="mt-0.5 text-xs text-white/40">
                     DJ: <span className="text-white/60">{rec.dj}</span> · ~
-                    {formatDuration(rec.estimatedDurationSec)} · {formatSize(rec.sizeBytes)}
+                    {formatDuration(rec.estimatedDurationSec)} · {formatFileSize(rec.sizeBytes)}
                   </p>
                 </div>
 
@@ -243,8 +212,12 @@ export default function RecordingsManager() {
 
       {/* Send to IA modal */}
       {iaTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="w-full max-w-md rounded-lg border border-white/20 bg-black p-6 space-y-4">
+        <Modal
+          onClose={() => {
+            if (busyKey !== iaTarget.key) setIaTarget(null);
+          }}
+          className="space-y-4"
+        >
             <h3 className="text-lg font-semibold text-white">Send to Internet Archive</h3>
             <p className="text-xs text-white/40">
               This publishes the recording publicly on archive.org. Larger files can take a
@@ -287,8 +260,7 @@ export default function RecordingsManager() {
                 {busyKey === iaTarget.key ? "Sending..." : "Send"}
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

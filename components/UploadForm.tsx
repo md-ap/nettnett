@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useDropzone } from "react-dropzone";
 import { useRouter } from "next/navigation";
 import RichTextEditor from "./RichTextEditor";
@@ -23,6 +23,14 @@ export default function UploadForm({ disabled = false, onRefresh }: { disabled?:
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const router = useRouter();
+  // Progress-reset delay — cleared on unmount so it can't setState late
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    };
+  }, []);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setFiles((prev) => [...prev, ...acceptedFiles]);
@@ -180,7 +188,8 @@ export default function UploadForm({ disabled = false, onRefresh }: { disabled?:
       setError("Network error. Please try again.");
     } finally {
       setUploading(false);
-      setTimeout(() => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = setTimeout(() => {
         setProgressText("");
         setProgressPercent(0);
       }, 2000);

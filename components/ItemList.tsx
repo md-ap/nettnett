@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import RichTextEditor from "./RichTextEditor";
+import Modal from "@/components/ui/Modal";
 import { B2_PUBLIC_URL, MEDIA_TYPES, LANGUAGES } from "@/lib/constants";
 import { formatFileSize, formatDate } from "@/lib/format";
 
@@ -73,45 +74,30 @@ function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onCancel();
-    }
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [onCancel]);
-
   const btnClass =
     confirmColor === "red"
       ? "bg-red-600 hover:bg-red-500"
       : "bg-emerald-600 hover:bg-emerald-500";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onCancel();
-      }}
-    >
-      <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#0a0a0a] p-6">
-        <h3 className="text-lg font-semibold">{title}</h3>
-        <p className="mt-3 text-sm text-white/60 leading-relaxed">{message}</p>
-        <div className="mt-6 flex items-center justify-end gap-3">
-          <button
-            onClick={onCancel}
-            className="rounded border border-white/20 px-5 py-2.5 text-sm text-white/70 transition-colors hover:bg-white/10"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className={`rounded px-5 py-2.5 text-sm font-semibold text-white transition-colors ${btnClass}`}
-          >
-            {confirmLabel}
-          </button>
-        </div>
+    <Modal onClose={onCancel}>
+      <h3 className="text-lg font-semibold">{title}</h3>
+      <p className="mt-3 text-sm text-white/60 leading-relaxed">{message}</p>
+      <div className="mt-6 flex items-center justify-end gap-3">
+        <button
+          onClick={onCancel}
+          className="rounded border border-white/20 px-5 py-2.5 text-sm text-white/70 transition-colors hover:bg-white/10"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          className={`rounded px-5 py-2.5 text-sm font-semibold text-white transition-colors ${btnClass}`}
+        >
+          {confirmLabel}
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -146,15 +132,15 @@ function EditModal({
   const [sendingToIA, setSendingToIA] = useState(false);
   const [iaSuccess, setIaSuccess] = useState(false);
   const [showIAConfirm, setShowIAConfirm] = useState(false);
+  // Delayed close after an IA send — cleared on unmount so onSaved/onClose
+  // never fire after the modal is gone
+  const iaCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Close on Escape
   useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
+    return () => {
+      if (iaCloseTimerRef.current) clearTimeout(iaCloseTimerRef.current);
+    };
+  }, []);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -210,7 +196,8 @@ function EditModal({
 
       if (res.ok) {
         setIaSuccess(true);
-        setTimeout(() => {
+        if (iaCloseTimerRef.current) clearTimeout(iaCloseTimerRef.current);
+        iaCloseTimerRef.current = setTimeout(() => {
           onSaved();
           onClose();
         }, 2500);
@@ -227,13 +214,7 @@ function EditModal({
 
   return (
     <>
-      <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) onClose();
-        }}
-      >
-        <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg border border-white/10 bg-[#0a0a0a] p-6">
+      <Modal onClose={onClose} maxWidth="2xl" scrollable>
           <div className="mb-6 flex items-center justify-between">
             <h2 className="text-lg font-semibold">Edit Upload</h2>
             <button
@@ -480,8 +461,7 @@ function EditModal({
               </button>
             </div>
           </form>
-        </div>
-      </div>
+      </Modal>
 
       {/* Send to IA confirm overlay */}
       {showIAConfirm && (

@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useRef, useCallback, ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import Modal from "@/components/ui/Modal";
+import Spinner from "@/components/ui/Spinner";
+import { postJson } from "@/lib/radio-client";
 
 type GateState =
   | "loading"
@@ -72,20 +75,13 @@ export default function ManagementGate({ children }: { children: ReactNode }) {
   const claimSession = useCallback(async () => {
     setClaiming(true);
     try {
-      const res = await fetch("/api/management/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "claim" }),
-      });
-
-      if (res.ok) {
-        setState("active");
-        isActiveRef.current = true;
-        startPolling();
-        startInactivityTimer();
-      }
+      await postJson("/api/management/session", { action: "claim" });
+      setState("active");
+      isActiveRef.current = true;
+      startPolling();
+      startInactivityTimer();
     } catch {
-      // Failed to claim
+      // Failed to claim (e.g. 409: someone else just took it) — stay on the prompt
     } finally {
       setClaiming(false);
     }
@@ -109,12 +105,10 @@ export default function ManagementGate({ children }: { children: ReactNode }) {
     heartbeatRef.current = setInterval(async () => {
       if (!isActiveRef.current) return;
       try {
-        const res = await fetch("/api/management/session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "heartbeat" }),
-        });
-        const data = await res.json();
+        const data = await postJson<{ kicked?: boolean }>(
+          "/api/management/session",
+          { action: "heartbeat" }
+        );
         if (data.kicked) {
           handleKicked();
         }
@@ -126,12 +120,10 @@ export default function ManagementGate({ children }: { children: ReactNode }) {
     kickCheckRef.current = setInterval(async () => {
       if (!isActiveRef.current) return;
       try {
-        const res = await fetch("/api/management/session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "check-kicked" }),
-        });
-        const data = await res.json();
+        const data = await postJson<{ kicked?: boolean; kickedBy?: KickedByInfo }>(
+          "/api/management/session",
+          { action: "check-kicked" }
+        );
         if (data.kicked && data.kickedBy) {
           setKickedBy(data.kickedBy);
           handleKicked();
@@ -235,7 +227,7 @@ export default function ManagementGate({ children }: { children: ReactNode }) {
   if (state === "loading") {
     return (
       <div className="flex items-center justify-center py-16">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+        <Spinner size="lg" />
       </div>
     );
   }
@@ -358,34 +350,34 @@ function Overlay({
   onNo: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-      <div className="w-full max-w-md rounded-lg border border-white/20 bg-black p-6 text-center">
-        <h2 className="mb-2 text-lg font-semibold text-white">{title}</h2>
-        <p className="mb-6 text-sm text-white/60">{message}</p>
-        <div className="flex justify-center gap-3">
-          <button
-            onClick={onNo}
-            disabled={loading}
-            className="rounded border border-white/20 px-6 py-2 text-sm text-white/50 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
-          >
-            {noLabel}
-          </button>
-          <button
-            onClick={onYes}
-            disabled={loading}
-            className="rounded bg-white/10 px-6 py-2 text-sm text-white transition-colors hover:bg-white/20 disabled:opacity-50"
-          >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-                ...
-              </span>
-            ) : (
-              yesLabel
-            )}
-          </button>
-        </div>
+    // No backdrop-dismiss: a stray click must not navigate away from the
+    // takeover/entry decision (Escape still triggers the "No" action)
+    <Modal onClose={onNo} closeOnBackdrop={false} className="text-center">
+      <h2 className="mb-2 text-lg font-semibold text-white">{title}</h2>
+      <p className="mb-6 text-sm text-white/60">{message}</p>
+      <div className="flex justify-center gap-3">
+        <button
+          onClick={onNo}
+          disabled={loading}
+          className="rounded border border-white/20 px-6 py-2 text-sm text-white/50 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
+        >
+          {noLabel}
+        </button>
+        <button
+          onClick={onYes}
+          disabled={loading}
+          className="rounded bg-white/10 px-6 py-2 text-sm text-white transition-colors hover:bg-white/20 disabled:opacity-50"
+        >
+          {loading ? (
+            <span className="flex items-center gap-2">
+              <Spinner size="sm" colorClass="border-white/20 border-t-white" />
+              ...
+            </span>
+          ) : (
+            yesLabel
+          )}
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }

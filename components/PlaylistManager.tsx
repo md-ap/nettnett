@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { radioPost, radioGet } from "@/lib/radio-client";
+import Spinner from "@/components/ui/Spinner";
 
 interface MediaFile {
   id: number;
@@ -63,36 +65,16 @@ export default function PlaylistManager() {
   const dragCounterRef = useRef(0);
   const mediaScrollRef = useRef<HTMLDivElement>(null);
 
-  // Fetch playlists and ensure all are sequential (not shuffle)
-  const fetchPlaylists = useCallback(async () => {
+  // Fetch playlists (pure read — new playlists are created sequential by
+  // the create-playlist action server-side)
+  const fetchPlaylists = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch("/api/radio?endpoint=playlists");
-      const data = await res.json();
+      const data = await radioGet<Playlist[]>("playlists", { signal });
       if (Array.isArray(data)) {
-        // Auto-fix: set any shuffle playlists to sequential
-        for (const pl of data) {
-          if (pl.order && pl.order !== "sequential") {
-            try {
-              await fetch("/api/radio", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  action: "playlist-update",
-                  playlistId: pl.id,
-                  order: "sequential",
-                }),
-              });
-              pl.order = "sequential";
-            } catch {
-              // Non-critical, continue
-            }
-          }
-        }
         // Fetch details for each playlist to get schedule_items
         const detailPromises = data.map(async (pl: Playlist) => {
           try {
-            const detailRes = await fetch(`/api/radio?endpoint=playlist/${pl.id}`, { cache: "no-store" });
-            const detail = await detailRes.json();
+            const detail = await radioGet<Playlist>(`playlist/${pl.id}`, { signal });
             pl.schedule_items = detail.schedule_items || [];
             pl.backend_options = detail.backend_options || [];
           } catch {
@@ -102,25 +84,27 @@ export default function PlaylistManager() {
           return pl;
         });
         await Promise.all(detailPromises);
+        if (signal?.aborted) return;
 
         // Sort by weight (higher weight = higher priority = first)
         const sorted = [...data].sort((a: Playlist, b: Playlist) => (b.weight || 0) - (a.weight || 0));
         setPlaylists(sorted);
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       console.error("Failed to fetch playlists:", err);
     }
   }, []);
 
   // Fetch media files
-  const fetchFiles = useCallback(async () => {
+  const fetchFiles = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch("/api/radio?endpoint=files");
-      const data = await res.json();
+      const data = await radioGet<MediaFile[]>("files", { signal });
       if (Array.isArray(data)) {
         setMediaFiles(data);
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       console.error("Failed to fetch files:", err);
     }
   }, []);
@@ -137,12 +121,14 @@ export default function PlaylistManager() {
 
   // Initial load
   useEffect(() => {
+    const controller = new AbortController();
     async function loadAll() {
       setLoading(true);
-      await Promise.all([fetchPlaylists(), fetchFiles()]);
+      await Promise.all([fetchPlaylists(controller.signal), fetchFiles(controller.signal)]);
       setLoading(false);
     }
     loadAll();
+    return () => controller.abort();
   }, [fetchPlaylists, fetchFiles]);
 
   // Open dropdown with position calculation
@@ -180,9 +166,14 @@ export default function PlaylistManager() {
       }
     };
     scrollEl?.addEventListener("scroll", handleScroll);
+    // Capture-phase window listener: closes on scroll in ANY scroll container
+    window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", handleScroll);
     document.addEventListener("mousedown", handleClick);
     return () => {
       scrollEl?.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", handleScroll);
       document.removeEventListener("mousedown", handleClick);
     };
   }, [openDropdownId]);
@@ -207,18 +198,12 @@ export default function PlaylistManager() {
   async function addToPlaylist(file: MediaFile, playlistId: number) {
     setActionLoading(`add-${file.id}`);
     try {
-      const res = await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "add-to-playlist",
-          playlistId,
-          mediaPath: file.path,
-        }),
+      await radioPost({
+        action: "add-to-playlist",
+        playlistId,
+        mediaPath: file.path,
       });
-      if (res.ok) {
-        await Promise.all([fetchFiles(), fetchPlaylists()]);
-      }
+      await Promise.all([fetchFiles(), fetchPlaylists()]);
     } catch (err) {
       console.error("Failed to add to playlist:", err);
     } finally {
@@ -237,37 +222,25 @@ export default function PlaylistManager() {
         const remaining = file.playlists.filter((p) => p.id !== playlistId);
 
         // First remove from all playlists
-        await fetch("/api/radio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "remove-from-playlist",
-            mediaPath: file.path,
-          }),
+        await radioPost({
+          action: "remove-from-playlist",
+          mediaPath: file.path,
         });
 
         // Then re-add to remaining playlists one by one
         for (const p of remaining) {
-          await fetch("/api/radio", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "add-to-playlist",
-              playlistId: p.id,
-              mediaPath: file.path,
-            }),
+          await radioPost({
+            action: "add-to-playlist",
+            playlistId: p.id,
+            mediaPath: file.path,
           });
         }
       } else {
         // Add to this playlist
-        await fetch("/api/radio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "add-to-playlist",
-            playlistId,
-            mediaPath: file.path,
-          }),
+        await radioPost({
+          action: "add-to-playlist",
+          playlistId,
+          mediaPath: file.path,
         });
       }
       await Promise.all([fetchFiles(), fetchPlaylists()]);
@@ -282,17 +255,11 @@ export default function PlaylistManager() {
   async function removeFromPlaylist(file: MediaFile) {
     setActionLoading(`remove-${file.id}`);
     try {
-      const res = await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "remove-from-playlist",
-          mediaPath: file.path,
-        }),
+      await radioPost({
+        action: "remove-from-playlist",
+        mediaPath: file.path,
       });
-      if (res.ok) {
-        await Promise.all([fetchFiles(), fetchPlaylists()]);
-      }
+      await Promise.all([fetchFiles(), fetchPlaylists()]);
     } catch (err) {
       console.error("Failed to remove from playlist:", err);
     } finally {
@@ -304,13 +271,9 @@ export default function PlaylistManager() {
   async function togglePlaylist(playlistId: number) {
     setActionLoading(`toggle-${playlistId}`);
     try {
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "playlist-toggle",
-          playlistId,
-        }),
+      await radioPost({
+        action: "playlist-toggle",
+        playlistId,
       });
       await fetchPlaylists();
     } catch (err) {
@@ -325,13 +288,11 @@ export default function PlaylistManager() {
     if (!newPlaylistName.trim()) return;
     setActionLoading("create-playlist");
     try {
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "create-playlist",
-          name: newPlaylistName.trim(),
-        }),
+      // The create-playlist action sets order: "sequential" server-side
+      // (app/api/radio/route.ts), so no follow-up order fix is needed here.
+      await radioPost({
+        action: "create-playlist",
+        name: newPlaylistName.trim(),
       });
       setNewPlaylistName("");
       setShowNewPlaylist(false);
@@ -347,13 +308,9 @@ export default function PlaylistManager() {
   async function deletePlaylist(playlistId: number) {
     setActionLoading(`delete-${playlistId}`);
     try {
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "delete-playlist",
-          playlistId,
-        }),
+      await radioPost({
+        action: "delete-playlist",
+        playlistId,
       });
       setConfirmDelete(null);
       if (expandedPlaylist === playlistId) {
@@ -380,14 +337,10 @@ export default function PlaylistManager() {
       const weight = reordered.length - i;
       if (reordered[i].weight !== weight) {
         try {
-          await fetch("/api/radio", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "playlist-update",
-              playlistId: reordered[i].id,
-              weight,
-            }),
+          await radioPost({
+            action: "playlist-update",
+            playlistId: reordered[i].id,
+            weight,
           });
         } catch (err) {
           console.error("Failed to update playlist weight:", err);
@@ -464,14 +417,10 @@ export default function PlaylistManager() {
     const [moved] = reordered.splice(fromIndex, 1);
     reordered.splice(toIndex, 0, moved);
     try {
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "playlist-reorder",
-          playlistId,
-          order: reordered.map((s) => s.id),
-        }),
+      await radioPost({
+        action: "playlist-reorder",
+        playlistId,
+        order: reordered.map((s) => s.id),
       });
       await Promise.all([fetchFiles(), fetchPlaylists()]);
     } catch (err) {
@@ -512,14 +461,10 @@ export default function PlaylistManager() {
 
     // Send reorder to AzuraCast
     try {
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "playlist-reorder",
-          playlistId,
-          order: reordered.map((s) => s.id),
-        }),
+      await radioPost({
+        action: "playlist-reorder",
+        playlistId,
+        order: reordered.map((s) => s.id),
       });
       await Promise.all([fetchFiles(), fetchPlaylists()]);
     } catch (err) {
@@ -533,7 +478,7 @@ export default function PlaylistManager() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+        <Spinner size="lg" />
       </div>
     );
   }
@@ -853,7 +798,7 @@ export default function PlaylistManager() {
                                 title="Remove from playlist"
                               >
                                 {actionLoading === `remove-${song.id}` ? (
-                                  <div className="h-3 w-3 animate-spin rounded-full border border-white/20 border-t-white/80" />
+                                  <Spinner size="sm" />
                                 ) : (
                                   <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                                     <path d="M6 18L18 6M6 6l12 12" />
@@ -1025,7 +970,7 @@ export default function PlaylistManager() {
                     </svg>
                   )}
                   {isToggling && (
-                    <div className="h-2 w-2 animate-spin rounded-full border border-white/20 border-t-white/80" />
+                    <Spinner size="xs" />
                   )}
                 </span>
                 <span className={isIn ? "text-white" : "text-white/60"}>

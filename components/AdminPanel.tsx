@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ROLES, ROLE_STYLES } from "@/lib/constants";
+import { ROLES, ROLE_STYLES, B2_PUBLIC_URL } from "@/lib/constants";
+import Modal from "@/components/ui/Modal";
+import Spinner from "@/components/ui/Spinner";
 
 interface User {
   id: string;
@@ -35,10 +37,13 @@ export default function AdminPanel() {
   const [viewFilesUser, setViewFilesUser] = useState<User | null>(null);
   const [togglingRole, setTogglingRole] = useState<string | null>(null);
   const [togglingVerify, setTogglingVerify] = useState<string | null>(null);
+  // Inline feedback (replaces the old native alert() calls)
+  const [feedback, setFeedback] = useState<{ type: "ok" | "error"; text: string } | null>(null);
 
   async function handleChangeRole(user: User, newRole: string) {
     if (newRole === user.role) return;
     setTogglingRole(user.id);
+    setFeedback(null);
     try {
       const res = await fetch(`/api/admin/users/${user.id}/role`, {
         method: "PATCH",
@@ -51,10 +56,10 @@ export default function AdminPanel() {
         );
       } else {
         const data = await res.json();
-        alert(data.error || "Failed to update role");
+        setFeedback({ type: "error", text: data.error || "Failed to update role" });
       }
     } catch {
-      alert("Network error");
+      setFeedback({ type: "error", text: "Network error" });
     } finally {
       setTogglingRole(null);
     }
@@ -63,6 +68,7 @@ export default function AdminPanel() {
   async function handleToggleVerified(user: User) {
     const newValue = !user.verified;
     setTogglingVerify(user.id);
+    setFeedback(null);
     try {
       const res = await fetch(`/api/admin/users/${user.id}/verify`, {
         method: "PATCH",
@@ -75,32 +81,35 @@ export default function AdminPanel() {
         );
       } else {
         const data = await res.json();
-        alert(data.error || "Failed to update verification");
+        setFeedback({ type: "error", text: data.error || "Failed to update verification" });
       }
     } catch {
-      alert("Network error");
+      setFeedback({ type: "error", text: "Network error" });
     } finally {
       setTogglingVerify(null);
     }
   }
 
-  const fetchUsers = useCallback(async () => {
+  const fetchUsers = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/users");
+      const res = await fetch("/api/admin/users", { signal });
       if (res.ok) {
         const data = await res.json();
         setUsers(data.users);
       }
     } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
       console.error("Failed to fetch users:", err);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchUsers();
+    const controller = new AbortController();
+    fetchUsers(controller.signal);
+    return () => controller.abort();
   }, [fetchUsers]);
 
   const filteredUsers = users.filter(
@@ -193,10 +202,16 @@ export default function AdminPanel() {
         className="w-full rounded border border-white/20 bg-white/5 px-4 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-white/40"
       />
 
+      {feedback && (
+        <p className={`text-sm ${feedback.type === "ok" ? "text-green-400" : "text-red-400"}`}>
+          {feedback.text}
+        </p>
+      )}
+
       {/* Users table */}
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+          <Spinner colorClass="border-white/20 border-t-white" />
         </div>
       ) : filteredUsers.length === 0 ? (
         <p className="py-8 text-center text-white/40">No users found.</p>
@@ -363,8 +378,7 @@ function AddUserModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-      <div className="w-full max-w-md rounded-lg border border-white/20 bg-black p-6">
+    <Modal onClose={onClose}>
         <h2 className="mb-4 text-lg font-semibold text-white">Add User</h2>
         <form onSubmit={handleSubmit} className="space-y-3">
           <input
@@ -436,8 +450,7 @@ function AddUserModal({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -483,8 +496,7 @@ function EditPasswordModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-      <div className="w-full max-w-md rounded-lg border border-white/20 bg-black p-6">
+    <Modal onClose={onClose}>
         <h2 className="mb-1 text-lg font-semibold text-white">
           Change Password
         </h2>
@@ -519,8 +531,7 @@ function EditPasswordModal({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -562,8 +573,8 @@ function DeleteUserModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-      <div className="w-full max-w-md rounded-lg border border-red-500/30 bg-black p-6">
+    // Destructive confirmation: no backdrop-dismiss (Escape still cancels)
+    <Modal onClose={onClose} closeOnBackdrop={false}>
         <h2 className="mb-2 text-lg font-semibold text-white">Delete User</h2>
         <p className="mb-1 text-sm text-white/60">
           Are you sure you want to delete this user?
@@ -591,8 +602,7 @@ function DeleteUserModal({
             {deleting ? "Deleting..." : "Delete User"}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -609,9 +619,12 @@ function UserFilesModal({
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const controller = new AbortController();
     async function fetchFiles() {
       try {
-        const res = await fetch(`/api/admin/users/${user.id}/files`);
+        const res = await fetch(`/api/admin/users/${user.id}/files`, {
+          signal: controller.signal,
+        });
         if (res.ok) {
           const data = await res.json();
           setItems(data.items || []);
@@ -619,18 +632,19 @@ function UserFilesModal({
           const data = await res.json();
           setError(data.error || "Failed to load files");
         }
-      } catch {
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError") return;
         setError("Network error");
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
     fetchFiles();
+    return () => controller.abort();
   }, [user.id]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-      <div className="max-h-[80vh] w-full max-w-4xl overflow-auto rounded-lg border border-white/20 bg-black p-6">
+    <Modal onClose={onClose} maxWidth="4xl" scrollable>
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-white">
@@ -648,7 +662,7 @@ function UserFilesModal({
 
         {loading ? (
           <div className="flex items-center justify-center py-8">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+            <Spinner colorClass="border-white/20 border-t-white" />
           </div>
         ) : error ? (
           <p className="py-8 text-center text-red-400">{error}</p>
@@ -693,7 +707,7 @@ function UserFilesModal({
                           : `${(file.size / 1024).toFixed(1)} KB`}
                       </span>
                       <a
-                        href={`https://f004.backblazeb2.com/file/nettnett1/${file.key}`}
+                        href={`${B2_PUBLIC_URL}/${file.key}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-blue-400 hover:underline"
@@ -710,7 +724,6 @@ function UserFilesModal({
             </p>
           </div>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -1,6 +1,21 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { radioPost, radioGet } from "@/lib/radio-client";
+import {
+  DAY_LABELS,
+  DAY_LABELS_SHORT,
+  HOURS,
+  timeToMinutes,
+  formatTime24,
+  getWeekStart,
+  formatWeekRange,
+  formatDayDate,
+  isSameDay,
+} from "@/lib/schedule";
+import { formatDurationText } from "@/lib/format";
+import Spinner from "@/components/ui/Spinner";
+import Modal from "@/components/ui/Modal";
 
 /* ─── Types ─── */
 interface ScheduleItem {
@@ -52,9 +67,6 @@ interface ScheduleBlock {
 }
 
 /* ─── Constants ─── */
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const DAY_LABELS_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const COLORS = [
   "bg-blue-500/30 border-blue-500/50 text-blue-300",
   "bg-purple-500/30 border-purple-500/50 text-purple-300",
@@ -70,62 +82,11 @@ function getColor(id: number) {
   return COLORS[id % COLORS.length];
 }
 
-function timeToMinutes(time: string): number {
-  const [h, m] = time.split(":").map(Number);
-  return h * 60 + m;
-}
-
-function formatTime(time: string): string {
-  const [h, m] = time.split(":");
-  return `${h}:${m}`;
-}
-
 function addSecondsToTime(time: string, seconds: number): string {
   const mins = timeToMinutes(time) + Math.ceil(seconds / 60);
   const h = Math.floor(mins / 60) % 24;
   const m = mins % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  if (m >= 60) {
-    const h = Math.floor(m / 60);
-    const rm = m % 60;
-    return `${h}h ${rm}m`;
-  }
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
-}
-
-/* ─── Week helpers ─── */
-function getWeekStart(date: Date): Date {
-  const d = new Date(date);
-  const day = d.getDay(); // 0=Sun
-  d.setDate(d.getDate() - day); // go to Sunday
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function formatWeekRange(weekStart: Date): string {
-  const end = new Date(weekStart);
-  end.setDate(end.getDate() + 6);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const startStr = `${months[weekStart.getMonth()]} ${weekStart.getDate()}`;
-  const endStr = `${weekStart.getMonth() !== end.getMonth() ? months[end.getMonth()] + " " : ""}${end.getDate()}, ${end.getFullYear()}`;
-  return `${startStr} – ${endStr}`;
-}
-
-function formatDayDate(weekStart: Date, dayIdx: number): string {
-  const d = new Date(weekStart);
-  d.setDate(d.getDate() + dayIdx);
-  return `${d.getDate()}`;
-}
-
-function isSameDay(date1: Date, date2: Date): boolean {
-  return date1.getFullYear() === date2.getFullYear() &&
-    date1.getMonth() === date2.getMonth() &&
-    date1.getDate() === date2.getDate();
 }
 
 export default function ScheduleCalendar() {
@@ -160,14 +121,12 @@ export default function ScheduleCalendar() {
   const [formInterrupt, setFormInterrupt] = useState(true); // default ON for scheduled playlists
 
   /* ─── Fetch playlists, media files, and build schedule blocks ─── */
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     try {
-      const [playlistRes, filesRes] = await Promise.all([
-        fetch("/api/radio?endpoint=playlists", { cache: "no-store" }),
-        fetch("/api/radio?endpoint=files", { cache: "no-store" }),
+      const [data, filesData] = await Promise.all([
+        radioGet<Playlist[]>("playlists", { signal }),
+        radioGet<MediaFile[]>("files", { signal }),
       ]);
-      const data = await playlistRes.json();
-      const filesData = await filesRes.json();
       if (!Array.isArray(data)) return;
 
       // The playlists list already includes total_length and num_songs
@@ -178,14 +137,14 @@ export default function ScheduleCalendar() {
       // (not just type==="scheduled" — AzuraCast may use different type values)
       const detailPromises = data.map(async (p: Playlist) => {
         try {
-          const detailRes = await fetch(`/api/radio?endpoint=playlist/${p.id}`, { cache: "no-store" });
-          return detailRes.json();
+          return await radioGet<Playlist>(`playlist/${p.id}`, { signal });
         } catch {
           return null;
         }
       });
 
       const details = await Promise.all(detailPromises);
+      if (signal?.aborted) return;
       const allBlocks: ScheduleBlock[] = [];
 
       for (const detail of details) {
@@ -222,7 +181,8 @@ export default function ScheduleCalendar() {
       }
 
       setBlocks(allBlocks);
-    } catch {
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
       setError("Failed to load schedule data");
     } finally {
       setLoading(false);
@@ -230,7 +190,9 @@ export default function ScheduleCalendar() {
   }, []);
 
   useEffect(() => {
-    fetchData();
+    const controller = new AbortController();
+    fetchData(controller.signal);
+    return () => controller.abort();
   }, [fetchData]);
 
   /* ─── Get fallback playlist (highest weight enabled playlist WITHOUT schedule_items) ─── */
@@ -361,38 +323,28 @@ export default function ScheduleCalendar() {
         const playlistName = `[Scheduled] ${file?.title || file?.artist || "Media"}`;
 
         // Create the playlist (already enabled)
-        const createRes = await fetch("/api/radio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "create-playlist", name: playlistName, is_enabled: true }),
+        const created = await radioPost<{ id: number }>({
+          action: "create-playlist",
+          name: playlistName,
+          is_enabled: true,
         });
-        const created = await createRes.json();
         targetPlaylistId = created.id;
 
         // Add the media file to the playlist
-        await fetch("/api/radio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "add-to-playlist",
-            playlistId: targetPlaylistId,
-            mediaPath: file?.path || formMediaFileId,
-          }),
+        await radioPost({
+          action: "add-to-playlist",
+          playlistId: targetPlaylistId,
+          mediaPath: file?.path || formMediaFileId,
         });
       }
 
       // Fetch current playlist details to get existing schedule_items
-      const detailRes = await fetch(`/api/radio?endpoint=playlist/${targetPlaylistId}`, { cache: "no-store" });
-      const detail = await detailRes.json();
+      const detail = await radioGet<Playlist>(`playlist/${targetPlaylistId}`);
       const existingItems: ScheduleItem[] = detail.schedule_items || [];
 
       // Ensure the playlist is enabled — a disabled playlist won't play even with schedule
       if (!detail.is_enabled) {
-        await fetch("/api/radio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "playlist-toggle", playlistId: targetPlaylistId }),
-        });
+        await radioPost({ action: "playlist-toggle", playlistId: targetPlaylistId });
       }
 
       // Build the new schedule item
@@ -447,29 +399,16 @@ export default function ScheduleCalendar() {
       const backendOptions: string[] = [];
       if (formInterrupt) backendOptions.push("interrupt");
 
-      const scheduleRes = await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "schedule-playlist",
-          playlistId: targetPlaylistId,
-          scheduleItems: newItems,
-          backendOptions,
-        }),
+      await radioPost({
+        action: "schedule-playlist",
+        playlistId: targetPlaylistId,
+        scheduleItems: newItems,
+        backendOptions,
       });
-
-      if (!scheduleRes.ok) {
-        const errData = await scheduleRes.json().catch(() => ({}));
-        throw new Error(errData.error || errData.message || "Failed to save schedule");
-      }
 
       // Restart backend so Liquidsoap reloads playlists and detects the new schedule
       // Without this, the schedule may show in AzuraCast UI but Liquidsoap won't switch
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "restart" }),
-      }).catch(() => {}); // non-critical: don't fail if restart has a hiccup
+      await radioPost({ action: "restart" }).catch(() => {}); // non-critical: don't fail if restart has a hiccup
 
       closeModal();
       await fetchData();
@@ -490,11 +429,7 @@ export default function ScheduleCalendar() {
       await removeScheduleItem(editingBlock.playlistId, editingBlock.itemIndex);
 
       // Restart backend so Liquidsoap reloads after schedule removal
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "restart" }),
-      }).catch(() => {});
+      await radioPost({ action: "restart" }).catch(() => {});
 
       closeModal();
       await fetchData();
@@ -506,8 +441,7 @@ export default function ScheduleCalendar() {
   }
 
   async function removeScheduleItem(playlistId: number, itemIndex: number) {
-    const detailRes = await fetch(`/api/radio?endpoint=playlist/${playlistId}`, { cache: "no-store" });
-    const detail = await detailRes.json();
+    const detail = await radioGet<Playlist>(`playlist/${playlistId}`);
     const existingItems: ScheduleItem[] = detail.schedule_items || [];
     const newItems = existingItems.filter((_: ScheduleItem, idx: number) => idx !== itemIndex);
 
@@ -515,42 +449,26 @@ export default function ScheduleCalendar() {
       // No more schedule items
       if (detail.name?.startsWith("[Scheduled]")) {
         // Auto-created playlist — delete it entirely so it doesn't enter general rotation
-        await fetch("/api/radio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "delete-playlist",
-            playlistId,
-          }),
+        await radioPost({
+          action: "delete-playlist",
+          playlistId,
         });
       } else {
         // User-created playlist — just remove schedule items and disable
-        await fetch("/api/radio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "unschedule-playlist",
-            playlistId,
-          }),
+        await radioPost({
+          action: "unschedule-playlist",
+          playlistId,
         });
         // Disable the playlist so it doesn't play in general rotation without a schedule
         if (detail.is_enabled) {
-          await fetch("/api/radio", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "playlist-toggle", playlistId }),
-          });
+          await radioPost({ action: "playlist-toggle", playlistId });
         }
       }
     } else {
-      await fetch("/api/radio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "schedule-playlist",
-          playlistId,
-          scheduleItems: newItems,
-        }),
+      await radioPost({
+        action: "schedule-playlist",
+        playlistId,
+        scheduleItems: newItems,
       });
     }
   }
@@ -601,7 +519,7 @@ export default function ScheduleCalendar() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+        <Spinner />
       </div>
     );
   }
@@ -814,14 +732,14 @@ export default function ScheduleCalendar() {
                               active ? "ring-1 ring-white/30" : ""
                             }`}
                             style={{ top: `${top}px`, height: `${height}px` }}
-                            title={`${block.playlistName} (${formatTime(block.startTime)} - ${formatTime(block.endTime)})${block.startDate || block.endDate ? ` [${block.startDate || "..."} → ${block.endDate || "..."}]` : ""}`}
+                            title={`${block.playlistName} (${formatTime24(block.startTime)} - ${formatTime24(block.endTime)})${block.startDate || block.endDate ? ` [${block.startDate || "..."} → ${block.endDate || "..."}]` : ""}`}
                           >
                             <div className="truncate text-[10px] font-medium leading-tight">
                               {block.playlistName}
                             </div>
                             {height > 20 && (
                               <div className="truncate text-[9px] opacity-70">
-                                {formatTime(block.startTime)} - {formatTime(block.endTime)}
+                                {formatTime24(block.startTime)} - {formatTime24(block.endTime)}
                               </div>
                             )}
                             {active && (
@@ -888,7 +806,7 @@ export default function ScheduleCalendar() {
                     )}
                   </div>
                   <div className="mt-1 text-xs opacity-70">
-                    {formatTime(block.startTime)} - {formatTime(block.endTime)}
+                    {formatTime24(block.startTime)} - {formatTime24(block.endTime)}
                     {(block.startDate || block.endDate) && (
                       <span className="ml-2 opacity-60">
                         {block.startDate || "..."} → {block.endDate || "..."}
@@ -917,8 +835,7 @@ export default function ScheduleCalendar() {
 
       {/* ─── Add/Edit Modal ─── */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="w-full max-w-md rounded-lg border border-white/20 bg-black p-6">
+        <Modal onClose={closeModal} maxWidth="md">
             <h3 className="mb-4 text-lg font-semibold text-white">
               {editingBlock ? "Edit Schedule Block" : "Add Schedule Block"}
             </h3>
@@ -990,7 +907,7 @@ export default function ScheduleCalendar() {
                     <option key={p.id} value={p.id} className="bg-black">
                       {p.name}
                       {p.num_songs ? ` (${p.num_songs} song${p.num_songs !== 1 ? "s" : ""})` : ""}
-                      {p.total_length ? ` — ${formatDuration(p.total_length)}` : ""}
+                      {p.total_length ? ` — ${formatDurationText(p.total_length)}` : ""}
                     </option>
                   ))}
                 </select>
@@ -998,7 +915,7 @@ export default function ScheduleCalendar() {
                   const pl = playlists.find((p) => p.id === formPlaylistId);
                   return pl?.total_length ? (
                     <p className="mt-1 text-[10px] text-white/30">
-                      Duration: {formatDuration(pl.total_length)}
+                      Duration: {formatDurationText(pl.total_length)}
                       {pl.num_songs ? ` · ${pl.num_songs} song${pl.num_songs !== 1 ? "s" : ""}` : ""}
                     </p>
                   ) : (
@@ -1050,7 +967,7 @@ export default function ScheduleCalendar() {
                         <div className="flex items-center justify-between gap-2">
                           <div className="truncate font-medium">{f.title || f.path}</div>
                           {f.length > 0 && (
-                            <span className="shrink-0 text-[10px] text-white/25">{formatDuration(Math.round(f.length))}</span>
+                            <span className="shrink-0 text-[10px] text-white/25">{formatDurationText(Math.round(f.length))}</span>
                           )}
                         </div>
                         {f.artist && (
@@ -1069,7 +986,7 @@ export default function ScheduleCalendar() {
                   return file ? (
                     <p className="mt-1 text-[10px] text-white/30">
                       Selected: {file.title || file.path}
-                      {file.length > 0 ? ` — ${formatDuration(Math.round(file.length))}` : ""}
+                      {file.length > 0 ? ` — ${formatDurationText(Math.round(file.length))}` : ""}
                     </p>
                   ) : null;
                 })()}
@@ -1128,7 +1045,7 @@ export default function ScheduleCalendar() {
                   Block: {blockDuration}m
                   {contentDuration > 0 && (
                     <>
-                      {" · "}Content: {formatDuration(Math.round(contentDuration))}
+                      {" · "}Content: {formatDurationText(Math.round(contentDuration))}
                       {blockDuration > Math.ceil(contentDuration / 60) + 1 && (
                         <span className="text-yellow-400/50 ml-1">
                           ⚠ Block is {blockDuration - Math.ceil(contentDuration / 60)}m longer than content
@@ -1255,7 +1172,7 @@ export default function ScheduleCalendar() {
                 >
                   {saving ? (
                     <span className="flex items-center gap-2">
-                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                      <Spinner size="sm" colorClass="border-white/20 border-t-white" />
                       Saving...
                     </span>
                   ) : editingBlock ? (
@@ -1266,8 +1183,7 @@ export default function ScheduleCalendar() {
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
