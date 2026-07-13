@@ -5,6 +5,8 @@
 //      header when present = exact frame count; otherwise CBR estimate
 //      from bitrate + Content-Length)
 
+import { isPublicHttpUrl } from "./url-guard";
+
 export interface DetectedDuration {
   seconds: number;
   source: "internet-archive" | "mp3-estimate";
@@ -15,6 +17,10 @@ export interface DetectedDuration {
 export async function detectRemoteAudioDuration(
   url: string
 ): Promise<DetectedDuration | null> {
+  // SSRF choke point: every server-side fetch of a user-provided broadcast
+  // URL goes through here — refuse private/internal targets outright.
+  if (!isPublicHttpUrl(url)) return null;
+
   const ia = await tryInternetArchive(url).catch(() => null);
   if (ia) return { seconds: ia.seconds, source: "internet-archive", title: ia.title };
 
@@ -92,13 +98,28 @@ function parseIaLength(len: string): number | null {
 // --- Generic MP3 estimate ---------------------------------------------
 
 async function tryMp3Estimate(url: string): Promise<number | null> {
-  // Ask for the first 128KB; some servers ignore Range, so we also cap reads
-  const res = await fetch(url, {
-    headers: { Range: "bytes=0-131071" },
-    cache: "no-store",
-    redirect: "follow",
-    signal: AbortSignal.timeout(15000),
-  });
+  // Follow redirects manually (max 5 hops) so every hop is re-validated by
+  // the SSRF guard — a public URL must not bounce us to an internal one.
+  // Ask for the first 128KB; some servers ignore Range, so we also cap reads.
+  let target = url;
+  let res: Response | null = null;
+  for (let hop = 0; hop < 5; hop++) {
+    if (!isPublicHttpUrl(target)) return null;
+    res = await fetch(target, {
+      headers: { Range: "bytes=0-131071" },
+      cache: "no-store",
+      redirect: "manual",
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) return null;
+      target = new URL(loc, target).toString();
+      continue;
+    }
+    break;
+  }
+  if (!res || (res.status >= 300 && res.status < 400)) return null; // redirect loop
   if (!res.ok && res.status !== 206) return null;
 
   // Total file size: from Content-Range (206) or Content-Length (200)
