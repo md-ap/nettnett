@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { radioGet, radioPost } from "@/lib/radio-client";
+import { formatDurationText } from "@/lib/format";
 
 interface ScheduleItem {
   start_time: number;
@@ -17,8 +18,80 @@ interface UrlBroadcastItem {
   title: string;
   is_instant: boolean;
   is_enabled: boolean;
+  // Schedule window covers the station's current time (is_enabled alone
+  // stays true forever after a broadcast ends)
+  is_active_now?: boolean;
   remote_url: string | null;
   schedule_items: ScheduleItem[];
+}
+
+type DetectedDuration =
+  | { seconds: number; source: string | null; title: string | null }
+  | "none" // detection ran and found nothing
+  | null; // idle / still typing
+
+// Debounced duration auto-detection preview: when the Duration select is on
+// "Auto-detect", probe the URL (Internet Archive metadata or MP3 headers)
+// and show what will actually air before the user presses the button.
+function useDetectedDuration(rawUrl: string, enabled: boolean): DetectedDuration {
+  const [info, setInfo] = useState<DetectedDuration>(null);
+
+  useEffect(() => {
+    setInfo(null);
+    if (!enabled) return;
+    const trimmed = rawUrl.trim();
+    if (!/^https?:\/\/.+/i.test(trimmed)) return;
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const data = await radioPost<{
+          seconds: number | null;
+          source: string | null;
+          title: string | null;
+        }>({ action: "detect-url-duration", url: trimmed });
+        if (cancelled) return;
+        setInfo(
+          data.seconds
+            ? { seconds: data.seconds, source: data.source, title: data.title }
+            : "none"
+        );
+      } catch {
+        if (!cancelled) setInfo("none");
+      }
+    }, 600);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [rawUrl, enabled]);
+
+  return info;
+}
+
+function DetectedHint({
+  detected,
+  fallbackText,
+}: {
+  detected: DetectedDuration;
+  fallbackText: string;
+}) {
+  if (detected === null) return null;
+  if (detected === "none") {
+    return <p className="mt-1.5 text-xs text-yellow-400/80">{fallbackText}</p>;
+  }
+  return (
+    <p className="mt-1.5 text-xs text-green-400/90">
+      Detected: {formatDurationText(detected.seconds)}
+      {detected.title ? ` — “${detected.title}”` : ""}{" "}
+      <span className="text-green-400/60">
+        ({detected.source === "internet-archive"
+          ? "exact, from Internet Archive"
+          : "estimated from the MP3"})
+      </span>
+    </p>
+  );
 }
 
 // Fields the broadcast actions return that the success messages use
@@ -64,8 +137,16 @@ export default function UrlBroadcast() {
   const [message, setMessage] = useState<{ type: "ok" | "error"; text: string } | null>(null);
 
   const instant = items.find((i) => i.is_instant);
-  const instantActive = instant && instant.is_enabled ? instant : null;
+  // Active = enabled AND its schedule window covers the station's current
+  // time (fallback to the old enabled-only behavior if the field is absent)
+  const instantActive =
+    instant && instant.is_enabled && instant.is_active_now !== false ? instant : null;
+  // Window ended but the playlist wasn't cleared yet
+  const instantFinished = instant && !instantActive ? instant : null;
   const scheduled = items.filter((i) => !i.is_instant);
+
+  const detected = useDetectedDuration(url, duration === 0);
+  const schedDetected = useDetectedDuration(schedUrl, schedDuration === 0);
 
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -220,6 +301,12 @@ export default function UrlBroadcast() {
                 {instantActive.title && (
                   <p className="mt-1 text-sm text-white/80">🎵 {instantActive.title}</p>
                 )}
+                {instantActive.schedule_items[0] && (
+                  <p className="mt-1 text-xs text-white/50">
+                    On air until {timeIntToStr(instantActive.schedule_items[0].end_time)}{" "}
+                    (station time) — then the rotation resumes automatically
+                  </p>
+                )}
                 {instantActive.remote_url && (
                   <p
                     className="mt-1 truncate text-xs text-white/50"
@@ -228,6 +315,20 @@ export default function UrlBroadcast() {
                     {instantActive.remote_url}
                   </p>
                 )}
+              </>
+            ) : instantFinished ? (
+              <>
+                <p className="flex items-center gap-2 text-sm font-medium text-white/70">
+                  <span className="inline-block h-2 w-2 rounded-full bg-white/30" />
+                  URL broadcast finished
+                </p>
+                {instantFinished.title && (
+                  <p className="mt-1 text-sm text-white/60">🎵 {instantFinished.title}</p>
+                )}
+                <p className="mt-1 text-xs text-white/40">
+                  The station is back on normal rotation. Clear it to tidy up — starting a
+                  new broadcast replaces it automatically.
+                </p>
               </>
             ) : (
               <p className="text-sm text-white/60">Normal rotation (playlists)</p>
@@ -245,6 +346,15 @@ export default function UrlBroadcast() {
               className="shrink-0 rounded border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-50"
             >
               {loading ? "Stopping..." : "Stop broadcast"}
+            </button>
+          )}
+          {instantFinished && (
+            <button
+              onClick={stopBroadcast}
+              disabled={loading}
+              className="shrink-0 rounded border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/20 disabled:opacity-50"
+            >
+              {loading ? "Clearing..." : "Clear"}
             </button>
           )}
         </div>
@@ -267,6 +377,10 @@ export default function UrlBroadcast() {
             Direct link to a public MP3 or stream (e.g. Internet Archive). It interrupts the
             rotation and takes over the air.
           </p>
+          <DetectedHint
+            detected={detected}
+            fallbackText="Could not auto-detect the duration — it will default to 1 hour unless you pick one."
+          />
         </div>
         <div className="flex items-end gap-3">
           <div>
@@ -323,6 +437,10 @@ export default function UrlBroadcast() {
               placeholder="https://archive.org/download/item/audio.mp3"
               disabled={loading}
               className="w-full rounded border border-white/20 bg-white/5 px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-white/40 disabled:opacity-50"
+            />
+            <DetectedHint
+              detected={schedDetected}
+              fallbackText="Could not auto-detect the duration — pick one manually or scheduling will be rejected."
             />
           </div>
           <div>

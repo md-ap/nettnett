@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRole, canManageRadio } from "@/lib/auth";
 import { detectRemoteAudioDuration } from "@/lib/audio-duration";
 import { logActivity, actorFromSession } from "@/lib/activity-log";
+import { getStationTimezone, stationNowParts, isWindowActiveNow } from "@/lib/station-schedule";
 
 const AZURACAST_URL = process.env.NEXT_PUBLIC_AZURACAST_URL || "";
 const AZURACAST_API_KEY = process.env.AZURACAST_API_KEY || "";
@@ -141,10 +142,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           seconds: detected?.seconds ?? null,
           source: detected?.source ?? null,
+          title: detected?.title ?? null,
         });
       } catch (e) {
         console.error("detect-url-duration error:", e);
-        return NextResponse.json({ seconds: null, source: null });
+        return NextResponse.json({ seconds: null, source: null, title: null });
       }
     }
     if (action === "schedule-url-broadcast") {
@@ -561,21 +563,17 @@ async function azuracast<T = unknown>(path: string, init: RequestInit = {}): Pro
   return data as T;
 }
 
-// Current wall-clock in the station's timezone, as AzuraCast schedule values:
-// time integer (900 = 09:00, 2230 = 22:30) and ISO day (1=Mon..7=Sun)
-function scheduleParts(date: Date, timeZone: string): { timeInt: number; isoDay: number } {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    hour: "2-digit",
-    minute: "2-digit",
-    weekday: "short",
-  }).formatToParts(date);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value || "";
-  const dayMap: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+// AzuraCast schedule values for a moment in the station's timezone:
+// time integer (900 = 09:00, 2230 = 22:30), ISO day (1=Mon..7=Sun) and date
+function scheduleParts(
+  date: Date,
+  timeZone: string
+): { timeInt: number; isoDay: number; dateStr: string } {
+  const { minutes, isoDay, dateStr } = stationNowParts(date, timeZone);
   return {
-    timeInt: (parseInt(get("hour")) % 24) * 100 + parseInt(get("minute")),
-    isoDay: dayMap[get("weekday")] || 1,
+    timeInt: Math.floor(minutes / 60) * 100 + (minutes % 60),
+    isoDay,
+    dateStr,
   };
 }
 
@@ -649,17 +647,24 @@ async function handleBroadcastUrl(body: { url?: string; durationMinutes?: number
   });
 
   // 2. Schedule window "now" in the STATION's timezone (not the server's)
-  const station = await azuracast<{ timezone?: string }>(`/api/station/${STATION_ID}`);
-  const tz = station?.timezone || "UTC";
+  const tz = await getStationTimezone();
   const start = scheduleParts(new Date(Date.now() - 2 * 60 * 1000), tz);
   const end = scheduleParts(new Date(Date.now() + duration * 60 * 1000), tz);
 
-  // 3. Schedule it NOW with interrupt (created enabled, so no toggle needed)
+  // 3. Schedule it NOW with interrupt (created enabled, so no toggle needed).
+  // DATE-BOUND one-off: without start_date/end_date the item repeats WEEKLY,
+  // so a leftover playlist would go back on air the same day next week.
   await azuracast(`/api/station/${STATION_ID}/playlist/${playlist.id}`, {
     method: "PUT",
     body: JSON.stringify({
       schedule_items: [
-        { start_time: start.timeInt, end_time: end.timeInt, days: [start.isoDay] },
+        {
+          start_time: start.timeInt,
+          end_time: end.timeInt,
+          days: [start.isoDay],
+          start_date: start.dateStr,
+          end_date: end.dateStr,
+        },
       ],
       backend_options: ["interrupt"],
     }),
@@ -821,11 +826,14 @@ async function handleListUrlBroadcasts() {
     (p) =>
       p.name.startsWith(BROADCAST_PLAYLIST_NAME) || p.name.startsWith(SCHEDULED_URL_PREFIX)
   );
-  const detailed = await Promise.all(
-    urlPlaylists.map((p) =>
-      azuracast<AzPlaylistDetail>(`/api/station/${STATION_ID}/playlist/${p.id}`)
-    )
-  );
+  const [detailed, tz] = await Promise.all([
+    Promise.all(
+      urlPlaylists.map((p) =>
+        azuracast<AzPlaylistDetail>(`/api/station/${STATION_ID}/playlist/${p.id}`)
+      )
+    ),
+    getStationTimezone(),
+  ]);
   return NextResponse.json(
     detailed.map((d) => {
       const isInstant = d.name.startsWith(BROADCAST_PLAYLIST_NAME);
@@ -837,6 +845,9 @@ async function handleListUrlBroadcasts() {
           : d.name.slice(SCHEDULED_URL_PREFIX.length),
         is_instant: isInstant,
         is_enabled: d.is_enabled,
+        // Whether its schedule window covers the station's current time —
+        // is_enabled alone stays true forever after a broadcast ends
+        is_active_now: d.is_enabled && isWindowActiveNow(d.schedule_items || [], tz),
         remote_url: d.remote_url,
         schedule_items: d.schedule_items || [],
       };
