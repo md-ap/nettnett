@@ -85,6 +85,7 @@ nettnett/
 │   │   │   ├── schedule/route.ts    # Public schedule for calendar/program
 │   │   │   ├── metadata/route.ts    # Public track metadata enrichment
 │   │   │   └── broadcast-status/route.ts  # Public URL-broadcast status
+│   │   │                            # (time-aware: inactive once the window ends)
 │   │   ├── recordings/route.ts      # List/play/delete recordings + send to IA
 │   │   ├── activity/route.ts        # Audit trail: GET paginated log (mgmt-gated),
 │   │   │                            # POST whitelisted client events (stream.*)
@@ -116,6 +117,8 @@ nettnett/
 │   │                                # getDbRole (display-only), hashToken, helpers
 │   ├── user-folder.ts               # allocateB2Folder for new users
 │   ├── activity-log.ts              # logActivity() — audit trail writes (never throws)
+│   ├── station-schedule.ts          # station-tz schedule windows (isWindowActiveNow,
+│   │                                # cached getStationTimezone) for broadcast status
 │   ├── constants.ts / format.ts / schedule.ts   # client-safe shared consts/helpers
 │   ├── radio-client.ts              # postJson/radioPost/radioGet (AbortSignal)
 │   ├── http-retry.ts / nas-webhook.ts  # webhook retry + NAS backup triggers
@@ -206,6 +209,7 @@ NAS_WEBHOOK_SECRET=...
 2. **Remote playlist hijack:** a `remote_url` playlist with NO schedule items — even disabled — gets baked into the Liquidsoap config as an always-available `mksafe(input.http(...))` source and hijacks the rotation with empty metadata after a station restart. This also wedges the nowplaying worker ("No track to update" crash loop → station shows offline while audio streams). **Always DELETE URL-broadcast playlists, never just disable** (the app's stop action does this).
 3. **Wedged nowplaying worker:** if `/api/nowplaying/nettnett` returns "Record not found" or stale data while the stream plays → `ssh root@49.12.191.80` then `docker exec azuracast supervisorctl restart php-nowplaying`.
 4. **Admin API:** `X-API-Key` header. When PUTting `/api/admin/station/1`, send the FULL `backend_config` object — partial nested writes clobber the rest.
+5. **Schedule items without `start_date`/`end_date` repeat WEEKLY** (days + times only = recurring). An "instant" URL broadcast scheduled that way goes back on air the same weekday/time the following week if its playlist isn't deleted — always date-bound one-off windows (the app does this now), and remember `is_enabled` never resets by itself when a window ends.
 
 ---
 
@@ -214,7 +218,9 @@ NAS_WEBHOOK_SECRET=...
 All under `/management` (tabs), talking to AzuraCast through the authenticated proxy `app/api/radio/route.ts` (GET `?endpoint=...` whitelist + POST `{action: ...}`).
 
 ### URL Broadcast (tab)
-Airs a public MP3/stream URL (replaces the legacy Telegram flow). **Instant:** creates a fresh `remote_url` playlist named `URL Broadcast — {title}`, schedules it "now" (station timezone) with `interrupt`, reloads; switch takes ~30s. **Stop:** DELETES the playlist + reload (see gotcha #2). **Scheduled:** one playlist per event (`URL: {title}`), date-bound, shows up in the Calendar tab. **Duration & title auto-detection** (`lib/audio-duration.ts`): exact via the IA metadata API (supports both `archive.org/download/...` and direct node `xxx.archive.org/N/items/...` URLs), else MP3 header parse (Xing/VBR-aware), else filename/1h fallback. Because remote streams usually carry no metadata (AzuraCast would show "Station Offline"), the human title is embedded in the playlist name and surfaced by the public endpoint `/api/radio/broadcast-status`, which `RadioProvider` polls to override the player display.
+Airs a public MP3/stream URL (replaces the legacy Telegram flow). **Instant:** creates a fresh `remote_url` playlist named `URL Broadcast — {title}`, schedules it "now" (station timezone) with `interrupt` **and `start_date`/`end_date` bounds** (see gotcha #5 — unbounded items repeat weekly), reloads; switch takes ~30s. **Stop:** DELETES the playlist + reload (see gotcha #2). **Scheduled:** one playlist per event (`URL: {title}`), date-bound, shows up in the Calendar tab. **Duration & title auto-detection** (`lib/audio-duration.ts`): exact via the IA metadata API (supports both `archive.org/download/...` and direct node `xxx.archive.org/N/items/...` URLs), else MP3 header parse (Xing/VBR-aware), else filename/1h fallback; the UI shows a live "Detected: 1h 3m — «title»" preview under the URL field while Duration = Auto-detect (debounced `detect-url-duration` probe, which also returns the title).
+**End-of-broadcast semantics:** the air returns to normal rotation when the schedule window closes, but the leftover playlist keeps `is_enabled=true` forever — so "active" is decided by checking the schedule window against the station's current time (`lib/station-schedule.ts: isWindowActiveNow` + cached `getStationTimezone`). The `url-broadcasts` listing exposes `is_active_now`; the tab shows "On air until HH:MM" while live and a "finished" state with a **Clear** button after (starting a new broadcast also auto-deletes the old playlist). If a manual duration is longer than the audio, the remainder of the window airs silence — prefer Auto-detect.
+Because remote streams usually carry no metadata (AzuraCast would show "Station Offline"), the human title is embedded in the playlist name and surfaced by the public endpoint `/api/radio/broadcast-status` (also time-aware, so the override drops automatically when the window ends), which `RadioProvider` polls to override the player display.
 
 ### Live Studio (Streamers tab)
 Native browser broadcasting — no BUTT/external software. `lib/webcaster.ts`: mic capture → MP3 192kbps encoded in-browser (`@breezystack/lamejs`; note: only its ESM build exports `Mp3Encoder`) → WebSocket subprotocol `webcast` to `wss://radionettnettstream.com/webdj/nettnett/` → Liquidsoap harbor with DJ credentials. UI: mic picker + pre-live signal check (VU meter + signal dot), Go Live/End, mute (streams silence; connection and recording continue), now-playing title updates, leave-page warning. AzuraCast's WebDJ page remains linked as "Advanced studio" fallback. DJ accounts are managed in the same tab (create/edit/delete streamers).
@@ -261,7 +267,7 @@ Audit trail of member/admin activity (`public.activity_log`, 180-day retention p
 ### Turnstile (anti-bot)
 - On register, **login**, forgot-password, and resend-verification. `components/Turnstile.tsx` renders nothing when the keys are unset, and `lib/turnstile.ts` skips verification **only outside production** — a missing secret in prod rejects requests instead of silently disabling protection.
 - Tokens are single-use: `AuthForm` remounts the widget (key bump) after a failed submit.
-- Site key is registered for `nettnett.vercel.app`; add `localhost` to the widget's allowed domains in the Cloudflare dashboard for local testing.
+- Production site key is registered for `nettnett.vercel.app` (keys live in Vercel). Local dev uses a SEPARATE localhost-only Turnstile widget whose keys are in `.env.local` — so localhost exercises the full widget + server verification exactly like prod.
 
 ---
 
