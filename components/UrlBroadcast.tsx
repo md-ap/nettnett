@@ -203,7 +203,7 @@ export default function UrlBroadcast() {
   };
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="space-y-6">
       {/* Status */}
       <div className="rounded border border-white/10 bg-white/5 p-4">
         <div className="flex items-center justify-between gap-4">
