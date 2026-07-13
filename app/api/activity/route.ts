@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { requireRole, canManageRadio } from "@/lib/auth";
+import { requireRole, canManageRadio, isAdmin } from "@/lib/auth";
 import { logActivity, actorFromSession } from "@/lib/activity-log";
 
 const PAGE_SIZE = 50;
@@ -12,10 +12,12 @@ const RETENTION_DAYS = 180;
 // forge arbitrary audit entries.
 const CLIENT_ACTIONS = new Set(["stream.start", "stream.stop"]);
 
-// GET /api/activity?page=&q=&category= — paginated audit trail (Logs tab)
+// GET /api/activity?page=&q=&category= — paginated audit trail (Logs tab).
+// ADMIN-only: management users operate the radio but don't see the audit
+// trail (the tab is hidden for them too — see ManagementTabs).
 export async function GET(request: NextRequest) {
-  const auth = await requireRole(canManageRadio, {
-    forbiddenMessage: "Management access required",
+  const auth = await requireRole(isAdmin, {
+    forbiddenMessage: "Admin access required",
   });
   if (auth instanceof NextResponse) return auth;
 
@@ -78,7 +80,8 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/activity — whitelisted client-side events (live stream start/end)
+// POST /api/activity — whitelisted client-side events (live stream start/end).
+// Stays management-gated: non-admin DJs report their sessions from LiveStudio.
 export async function POST(request: NextRequest) {
   const auth = await requireRole(canManageRadio, {
     forbiddenMessage: "Management access required",

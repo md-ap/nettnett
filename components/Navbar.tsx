@@ -209,21 +209,24 @@ export default function Navbar({ initialSession }: { initialSession?: NavSession
                   role="menu"
                   className="absolute right-0 top-full mt-2 w-48 rounded-lg border border-white/15 bg-neutral-900 py-1 shadow-xl"
                 >
-                  <Link href="/upload" role="menuitem" className={menuItemClass("/upload")}>
-                    Upload
+                  {role === "admin" && (
+                    <>
+                      <Link href="/admin" role="menuitem" className={menuItemClass("/admin", true)}>
+                        Admin
+                      </Link>
+                      <div className="my-1 border-t border-white/10" />
+                    </>
+                  )}
+                  <Link href="/account" role="menuitem" className={menuItemClass("/account")}>
+                    Account
                   </Link>
                   {canManageRole(role) && (
                     <Link href="/management" role="menuitem" className={menuItemClass("/management")}>
                       Management
                     </Link>
                   )}
-                  {role === "admin" && (
-                    <Link href="/admin" role="menuitem" className={menuItemClass("/admin", true)}>
-                      Admin
-                    </Link>
-                  )}
-                  <Link href="/account" role="menuitem" className={menuItemClass("/account")}>
-                    Account
+                  <Link href="/upload" role="menuitem" className={menuItemClass("/upload")}>
+                    Upload
                   </Link>
                   <div className="my-1 border-t border-white/10" />
                   <button
@@ -272,21 +275,24 @@ export default function Navbar({ initialSession }: { initialSession?: NavSession
             {/* Member links */}
             {authenticated && (
               <div className="flex flex-col border-b border-white/10 pb-3 mb-3">
-                <Link href="/upload" className={mobileItemClass("/upload")}>
-                  Upload
+                {role === "admin" && (
+                  <>
+                    <Link href="/admin" className={mobileItemClass("/admin", true)}>
+                      Admin
+                    </Link>
+                    <div className="my-1 border-t border-white/10" />
+                  </>
+                )}
+                <Link href="/account" className={mobileItemClass("/account")}>
+                  Account
                 </Link>
                 {canManageRole(role) && (
                   <Link href="/management" className={mobileItemClass("/management")}>
                     Management
                   </Link>
                 )}
-                {role === "admin" && (
-                  <Link href="/admin" className={mobileItemClass("/admin", true)}>
-                    Admin
-                  </Link>
-                )}
-                <Link href="/account" className={mobileItemClass("/account")}>
-                  Account
+                <Link href="/upload" className={mobileItemClass("/upload")}>
+                  Upload
                 </Link>
               </div>
             )}

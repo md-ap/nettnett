@@ -17,7 +17,7 @@ NettNett is a radio streaming platform and file management system built with Nex
 - `/management` — Radio management (`management`/`admin` roles; exclusive-lock sessions)
 - `/admin` — User administration (admin role only)
 
-**App shell:** one unified `Navbar` everywhere (logo + public links left; logged-in users get a user dropdown with Upload/Management/Admin/Account/Logout, role-gated; hamburger on mobile). The stream player is a `FloatingPlayer` pill fixed bottom-right (minimizable), mounted once in the root layout — hidden on `/` (the home IS the big player) and on the minimal auth pages. Audio survives navigation (RadioProvider in root layout).
+**App shell:** one unified `Navbar` everywhere (logo + public links left; logged-in users get a user dropdown — Admin first (admin-only, divider below), then Account/Management/Upload/Logout, role-gated; hamburger on mobile mirrors the order). The stream player is a `FloatingPlayer` pill fixed bottom-right (minimizable), mounted once in the root layout — hidden on `/` (the home IS the big player) and on the minimal auth pages. Audio survives navigation (RadioProvider in root layout).
 
 ---
 
@@ -93,8 +93,9 @@ nettnett/
 │   │   │   └── broadcast-status/route.ts  # Public URL-broadcast status
 │   │   │                            # (time-aware: inactive once the window ends)
 │   │   ├── recordings/route.ts      # List/play/delete recordings + send to IA
-│   │   ├── activity/route.ts        # Audit trail: GET paginated log (mgmt-gated),
-│   │   │                            # POST whitelisted client events (stream.*)
+│   │   ├── activity/route.ts        # Audit trail: GET paginated log (ADMIN-gated),
+│   │   │                            # POST whitelisted client events (stream.*,
+│   │   │                            # management-gated — DJs report live sessions)
 │   │   ├── admin/users/...          # Admin user management
 │   │   ├── management/session/      # Exclusive management lock (5min timeout)
 │   │   └── setup/route.ts           # Idempotent DB setup + migrations
@@ -104,7 +105,8 @@ nettnett/
 │   ├── RadioPlayer.tsx / RadioProvider.tsx / FloatingPlayer.tsx
 │   ├── ui/                          # Spinner, Modal, Button, Field primitives
 │   ├── ManagementTabs.tsx           # Stream | URL Broadcast | Playlists |
-│   │                                # Calendar | Streamers | Recordings | Logs
+│   │                                # Calendar | Streamers | Recordings |
+│   │                                # Logs (ADMIN-only, isAdmin prop)
 │   ├── ActivityLog.tsx              # Logs tab: audit trail list + filters
 │   ├── NowPlayingControl.tsx / PlaylistManager.tsx / ScheduleCalendar.tsx
 │   ├── StreamerManager.tsx          # DJ accounts + native Live Studio
@@ -241,8 +243,8 @@ Pre-existing features: playlist CRUD + song assignment by B2 path, weekly schedu
 ### iCal feed (public)
 `GET /api/radio/calendar.ics` — subscribable calendar of the programming (the `/program` page has a "Subscribe" block: Google Calendar link, `webcal://` for Apple/Outlook, copy URL). Logic: emits the RESOLVED upcoming instances from AzuraCast `/api/station/{id}/schedule` (~2-week window via `start`/`end` params) as absolute-UTC `VEVENT`s — no RRULE/VTIMEZONE reconstruction, so DST and date-bound one-offs are handled by AzuraCast, and streamer slots are included. UID = `type-id-start_timestamp` (stable per instance → no dupes on refresh; removed events vanish on next sync). URL-broadcast playlist prefixes ("URL: ", "URL Broadcast — ") are stripped from titles. Upstream failure → 503, NOT an empty 200 (subscribers keep their last good copy). Calendar apps poll on their own cadence (Google ~12-24h — same-day changes lag; that's inherent to ICS subscriptions).
 
-### Logs (tab)
-Audit trail of member/admin activity (`public.activity_log`, 180-day retention pruned on read). Server routes call `logActivity()` (`lib/activity-log.ts` — awaited, never throws) after successful mutations: uploads/edits/deletes/IA publishes, URL broadcasts (start/stop/schedule/delete), playlist + calendar + DJ-account changes, station actions, recordings, management-panel claims, admin user operations, registrations. Live-stream start/end is reported by the browser (LiveStudio → `POST /api/activity`, whitelisted `stream.*` actions only, since the DJ connects straight to the AzuraCast harbor). The tab lists entries with category badges, user, detail, timestamp; search + category filter + pagination.
+### Logs (tab — ADMIN-only)
+Audit trail of member/admin activity (`public.activity_log`, 180-day retention pruned on read). **Admin-only**: the tab is hidden for `management` users (ManagementTabs `isAdmin` prop from the server page) and `GET /api/activity` enforces `isAdmin` server-side; the POST stays management-gated so DJs can report live sessions. Server routes call `logActivity()` (`lib/activity-log.ts` — awaited, never throws) after successful mutations: uploads/edits/deletes/IA publishes, URL broadcasts (start/stop/schedule/delete), playlist + calendar + DJ-account changes, station actions, recordings, management-panel claims, admin user operations, registrations. Live-stream start/end is reported by the browser (LiveStudio → `POST /api/activity`, whitelisted `stream.*` actions only, since the DJ connects straight to the AzuraCast harbor). The tab lists entries with category badges, user, detail, timestamp; search + category filter + pagination.
 
 ---
 
@@ -257,7 +259,7 @@ Audit trail of member/admin activity (`public.activity_log`, 180-day retention p
 | `admin` | ✅ | ✅ | ✅ |
 
 - **API guards use `requireRole(predicate)` (`lib/auth.ts`)** — ONE fresh DB read per request returning `{ session, role, b2Folder }`. Fail-closed: DB error → 503, deleted user with live JWT → 401. JWT `role`/`canManage` claims are never trusted for authorization. `getDbRole` remains for DISPLAY-ONLY spots (`/api/auth/session`, server pages) where a DB blip shouldn't log the UI out.
-- Guarded APIs: all `/api/files/*` (incl. `list`) with `canUpload`; `/api/radio`, `/api/recordings`, `/api/management/session` with `canManageRadio`; all `/api/admin/*` with `isAdmin`; `request-access` authenticated + fresh role. `/api/auth/session` returns the FRESH role so the navbar gates links without re-login.
+- Guarded APIs: all `/api/files/*` (incl. `list`) with `canUpload`; `/api/radio`, `/api/recordings`, `/api/management/session`, `POST /api/activity` with `canManageRadio`; all `/api/admin/*` and `GET /api/activity` (Logs tab) with `isAdmin`; `request-access` authenticated + fresh role. `/api/auth/session` returns the FRESH role so the navbar gates links without re-login.
 - **B2 tenant isolation:** each user gets a unique `users.b2_folder` allocated at registration (`lib/user-folder.ts`, name-derived + suffix on collision). Routes read `auth.b2Folder`; the folder is NEVER re-derived from the (non-unique) name. Backfill migration `migrateB2Folder` used the byte-identical legacy derivation so existing folders/AzuraCast paths kept working.
 - Files input hardening: presign re-derives `titleToFolder(title)` and sanitizes file names (basename, control chars stripped, 180-char cap, ≤25 files); finalize 400s if the client `titleFolder` mismatches; delete/update/send-to-ia validate the folder slug shape.
 - One-shot migrations tracked in `public.migration_log` (e.g. `roles_overhaul`: can_manage→management, old plain users→uploader). The `can_manage` column still exists but no code reads it.

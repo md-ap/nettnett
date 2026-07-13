@@ -23,7 +23,8 @@ export default async function ManagementPage() {
       </h1>
 
       <ManagementGate>
-        <ManagementTabs />
+        {/* Logs tab is admin-only; role is the FRESH DB read from above */}
+        <ManagementTabs isAdmin={role === "admin"} />
       </ManagementGate>
     </div>
   );

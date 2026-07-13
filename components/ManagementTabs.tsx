@@ -21,14 +21,18 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "logs", label: "Logs" },
 ];
 
-export default function ManagementTabs() {
+// isAdmin comes from the server page (fresh DB role): the Logs tab (audit
+// trail) is admin-only — management users run the radio without seeing it.
+// The GET /api/activity route enforces the same rule server-side.
+export default function ManagementTabs({ isAdmin = false }: { isAdmin?: boolean }) {
   const [activeTab, setActiveTab] = useState<Tab>("stream");
+  const visibleTabs = isAdmin ? tabs : tabs.filter((t) => t.id !== "logs");
 
   return (
     <div>
       {/* Tab bar — scrollable on mobile, hidden scrollbar */}
       <div className="flex overflow-x-auto border-b border-white/10 mb-6 -mx-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-        {tabs.map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
@@ -50,7 +54,7 @@ export default function ManagementTabs() {
       {activeTab === "calendar" && <ScheduleCalendar />}
       {activeTab === "streamers" && <StreamerManager />}
       {activeTab === "recordings" && <RecordingsManager />}
-      {activeTab === "logs" && <ActivityLog />}
+      {activeTab === "logs" && isAdmin && <ActivityLog />}
     </div>
   );
 }
