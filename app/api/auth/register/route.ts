@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import pool from "@/lib/db";
-import { signToken, createSessionCookie } from "@/lib/auth";
+import { signToken, createSessionCookie, hashToken } from "@/lib/auth";
 import { createUserFolder } from "@/lib/b2";
 import { sendVerificationEmail } from "@/lib/email";
 import { verifyTurnstile } from "@/lib/turnstile";
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     const appUrl = new URL(request.url).origin;
     (async () => {
       const verifyToken = crypto.randomBytes(32).toString("hex");
-      const tokenHash = crypto.createHash("sha256").update(verifyToken).digest("hex");
+      const tokenHash = hashToken(verifyToken);
       await pool.query(
         `INSERT INTO public.email_verification_tokens (user_id, token_hash, expires_at)
          VALUES ($1, $2, NOW() + INTERVAL '48 hours')`,

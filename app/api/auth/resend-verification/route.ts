@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import pool from "@/lib/db";
+import { hashToken } from "@/lib/auth";
 import { sendVerificationEmail } from "@/lib/email";
 import { verifyTurnstile } from "@/lib/turnstile";
 
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
     if (!user || user.email_verified) return genericResponse;
 
     const token = crypto.randomBytes(32).toString("hex");
-    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const tokenHash = hashToken(token);
 
     await pool.query(
       `INSERT INTO public.email_verification_tokens (user_id, token_hash, expires_at)

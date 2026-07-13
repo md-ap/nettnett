@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { cookies } from "next/headers";
 
@@ -48,10 +49,16 @@ export function signToken(payload: JWTPayload): string {
 
 export function verifyToken(token: string): JWTPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as JWTPayload;
+    return jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] }) as JWTPayload;
   } catch {
     return null;
   }
+}
+
+// SHA-256 hex digest used to store one-time tokens (password reset,
+// email verification) — only the hash ever touches the database.
+export function hashToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
 }
 
 export async function getSession(): Promise<JWTPayload | null> {
